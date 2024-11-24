@@ -1,7 +1,12 @@
+"use strict";
+var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __propIsEnum = Object.prototype.propertyIsEnumerable;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -17,6 +22,27 @@ var __spreadValues = (a, b) => {
   return a;
 };
 var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
     var fulfilled = (value) => {
@@ -38,15 +64,22 @@ var __async = (__this, __arguments, generator) => {
   });
 };
 
+// src/index.ts
+var src_exports = {};
+__export(src_exports, {
+  default: () => src_default
+});
+module.exports = __toCommonJS(src_exports);
+
 // src/context.ts
-import path from "path";
-import fs from "fs";
-import JSON5 from "json5";
+var import_path = __toESM(require("path"), 1);
+var import_fs = __toESM(require("fs"), 1);
+var import_json5 = __toESM(require("json5"), 1);
 
 // utils/index.ts
-import generate from "@babel/generator";
-import { parse } from "@vue/compiler-sfc";
-import { babelParse, walkAST } from "ast-kit";
+var import_generator = __toESM(require("@babel/generator"), 1);
+var import_compiler_sfc = require("@vue/compiler-sfc");
+var import_ast_kit = require("ast-kit");
 
 // utils/constant.ts
 var virtualFileId = "mp-weixin-back-helper";
@@ -59,7 +92,7 @@ function isArrowFunction(func) {
 function parseSFC(code) {
   return __async(this, null, function* () {
     try {
-      return parse(code).descriptor;
+      return (0, import_compiler_sfc.parse)(code).descriptor;
     } catch (error) {
       throw new Error(`\u89E3\u6790vue\u6587\u4EF6\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u6587\u4EF6\u662F\u5426\u6B63\u786E`);
     }
@@ -77,11 +110,11 @@ function transformVueFile(code, id) {
     const componentStr = '<page-container :show="__MP_BACK_SHOW_PAGE_CONTAINER__" :overlay="false" @beforeleave="onBeforeLeave" :z-index="1" :duration="false"></page-container>';
     const sfc = yield parseSFC(code);
     const setupCode = (_a = sfc.scriptSetup) == null ? void 0 : _a.loc.source;
-    const setupAst = babelParse(setupCode || "", (_b = sfc.scriptSetup) == null ? void 0 : _b.lang);
+    const setupAst = (0, import_ast_kit.babelParse)(setupCode || "", (_b = sfc.scriptSetup) == null ? void 0 : _b.lang);
     let pageBackConfig = this.config;
     let hasPageBack = false, hasImportRef = false, pageBackFnName = "onPageBack", callbackCode = ``;
     if (setupAst) {
-      walkAST(setupAst, {
+      (0, import_ast_kit.walkAST)(setupAst, {
         enter(node) {
           var _a2;
           if (node.type == "ImportDeclaration" && node.source.value.includes(virtualFileId)) {
@@ -103,14 +136,14 @@ function transformVueFile(code, id) {
             const callback = node.expression.arguments[0];
             const backArguments = node.expression.arguments[1];
             if (backArguments && backArguments.type == "ObjectExpression") {
-              const config = new Function(`return (${generate(backArguments).code});`)();
+              const config = new Function(`return (${(0, import_generator.default)(backArguments).code});`)();
               pageBackConfig = __spreadValues(__spreadValues({}, pageBackConfig), config);
             }
             if (callback && (callback.type === "ArrowFunctionExpression" || callback.type === "FunctionExpression")) {
               const body = callback.body;
               if (body.type === "BlockStatement") {
                 body.body.forEach((statement) => {
-                  callbackCode += generate(statement).code;
+                  callbackCode += (0, import_generator.default)(statement).code;
                 });
               }
             }
@@ -181,17 +214,17 @@ var pageContext = class {
     this.config = config;
   }
   getPagesJsonPath() {
-    const pagesJsonPath = path.join(this.config.root, "src/pages.json");
+    const pagesJsonPath = import_path.default.join(this.config.root, "src/pages.json");
     return pagesJsonPath;
   }
   // 获取页面配置详情
   getPagesJsonInfo() {
     return __async(this, null, function* () {
-      const hasPagesJson = fs.existsSync(this.getPagesJsonPath());
+      const hasPagesJson = import_fs.default.existsSync(this.getPagesJsonPath());
       if (!hasPagesJson) return;
       try {
-        const content = yield fs.promises.readFile(this.getPagesJsonPath(), "utf-8");
-        const pagesContent = JSON5.parse(content);
+        const content = yield import_fs.default.promises.readFile(this.getPagesJsonPath(), "utf-8");
+        const pagesContent = import_json5.default.parse(content);
         const { pages, subpackages } = pagesContent;
         if (pages) {
           const mainPages = pages.reduce((acc, current) => {
@@ -267,6 +300,3 @@ function MpBackPlugin(userOptions = {}) {
   };
 }
 var src_default = MpBackPlugin;
-export {
-  src_default as default
-};
