@@ -22,6 +22,25 @@ export default defineConfig({
 })
 ```
 
+具体的配置为：
+
+```ts
+type Config = {
+  /**
+   * 是否阻止默认的回退事件，默认为 false
+   */
+  preventDefault: boolean
+  /**
+   * 阻止次数，默认是 `1`
+   */
+  frequency: number
+  /**
+   * 页面回退时触发
+   */
+  onPageBack?: (params: BackParams) => void
+}
+```
+
 在 vue3 中使用
 
 ```ts
