@@ -1,5 +1,6 @@
 import path from 'path'
 import fs from 'fs'
+import JSON5 from 'json5'
 import { ContextConfig, PagesJson } from '../types'
 import { transformVueFile } from '../utils'
 
@@ -20,7 +21,7 @@ export class pageContext {
     if (!hasPagesJson) return
     try {
       const content = await fs.promises.readFile(this.getPagesJsonPath(), 'utf-8')
-      const pagesContent = JSON.parse(content) as PagesJson
+      const pagesContent = JSON5.parse(content) as PagesJson
       const { pages, subpackages } = pagesContent
       if (pages) {
         const mainPages = pages.reduce((acc: string[], current) => {
