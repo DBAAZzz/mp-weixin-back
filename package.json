@@ -1,0 +1,49 @@
+{
+  "name": "mp-weixin-back",
+  "version": "0.0.1",
+  "description": "监听微信小程序的手势返回和页面默认导航栏的返回",
+  "main": "./dist/index.ts",
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest"
+  },
+  "keywords": [
+    "微信小程序",
+    "手势返回",
+    "vite",
+    "uniapp"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      }
+    },
+    "./client": {
+      "types": "./client.d.ts"
+    }
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@babel/generator": "^7.26.2",
+    "@babel/parser": "^7.26.2",
+    "@babel/traverse": "^7.25.9",
+    "@types/babel__generator": "^7.6.8",
+    "@types/node": "^22.9.3",
+    "@vitejs/plugin-vue": "^5.2.0",
+    "@vue/compiler-sfc": "^3.2.45",
+    "@vue/test-utils": "^2.4.6",
+    "ast-kit": "^1.3.1",
+    "happy-dom": "^15.11.6",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.5",
+    "vue": "^3.5.13"
+  },
+  "lint-staged": {
+    "*": "prettier --write"
+  }
+}
