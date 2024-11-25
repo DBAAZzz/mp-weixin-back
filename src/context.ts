@@ -39,7 +39,8 @@ export class pageContext {
         this.pages.push(...subPages)
       }
     } catch (error) {
-      throw new Error('请正确配置项目的pages.json文件')
+      console.error('读取pages.json文件失败')
+      console.error(error)
     }
   }
   // 获取指定id的page

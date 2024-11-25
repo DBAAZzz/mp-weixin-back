@@ -167,7 +167,8 @@ class pageContext {
         this.pages.push(...subPages);
       }
     } catch (error) {
-      throw new Error("\u8BF7\u6B63\u786E\u914D\u7F6E\u9879\u76EE\u7684pages.json\u6587\u4EF6");
+      console.error("\u8BFB\u53D6pages.json\u6587\u4EF6\u5931\u8D25");
+      console.error(error);
     }
   }
   // 获取指定id的page
