@@ -71,7 +71,10 @@ export async function transformVueFile(this: pageContext, code: string, id: stri
           const backArguments = node.expression.arguments[1]
           // 第二个参数为object才有效，覆盖插件传入的配置
           if (backArguments && backArguments.type == 'ObjectExpression') {
-            const config = new Function(`return (${generate(backArguments).code});`)()
+            const config = new Function(
+              // @ts-ignore
+              `return (${(generate.default ? generate.default : generate)(backArguments).code});`
+            )()
             pageBackConfig = { ...pageBackConfig, ...config }
           }
 
@@ -83,7 +86,8 @@ export async function transformVueFile(this: pageContext, code: string, id: stri
             if (body.type === 'BlockStatement') {
               // 遍历 BlockStatement 的内容
               body.body.forEach((statement) => {
-                callbackCode += generate(statement).code // 将 AST 节点生成代码
+                // @ts-ignore
+                callbackCode += (generate.default ? generate.default : generate)(statement).code // 将 AST 节点生成代码
               })
             }
           }

@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const JSON5 = require('json5');
-const chalk = require('chalk');
+const kolorist = require('kolorist');
 const generate = require('@babel/generator');
 const compilerSfc = require('@vue/compiler-sfc');
 const astKit = require('ast-kit');
@@ -13,7 +13,6 @@ function _interopDefaultCompat (e) { return e && typeof e === 'object' && 'defau
 const path__default = /*#__PURE__*/_interopDefaultCompat(path);
 const fs__default = /*#__PURE__*/_interopDefaultCompat(fs);
 const JSON5__default = /*#__PURE__*/_interopDefaultCompat(JSON5);
-const chalk__default = /*#__PURE__*/_interopDefaultCompat(chalk);
 const generate__default = /*#__PURE__*/_interopDefaultCompat(generate);
 
 const virtualFileId = "mp-weixin-back-helper";
@@ -65,14 +64,17 @@ async function transformVueFile(code, id) {
           const callback = node.expression.arguments[0];
           const backArguments = node.expression.arguments[1];
           if (backArguments && backArguments.type == "ObjectExpression") {
-            const config = new Function(`return (${generate__default(backArguments).code});`)();
+            const config = new Function(
+              // @ts-ignore
+              `return (${(generate__default.default ? generate__default.default : generate__default)(backArguments).code});`
+            )();
             pageBackConfig = { ...pageBackConfig, ...config };
           }
           if (callback && (callback.type === "ArrowFunctionExpression" || callback.type === "FunctionExpression")) {
             const body = callback.body;
             if (body.type === "BlockStatement") {
               body.body.forEach((statement) => {
-                callbackCode += generate__default(statement).code;
+                callbackCode += (generate__default.default ? generate__default.default : generate__default)(statement).code;
               });
             }
           }
@@ -150,14 +152,14 @@ class pageContext {
     __publicField(this, "pages", []);
     __publicField(this, "log", {
       info: (text) => {
-        console.log(chalk__default.white(text));
+        console.log(kolorist.white(text));
       },
       error: (text) => {
-        console.log(chalk__default.red(text));
+        console.log(kolorist.red(text));
       },
       devLog: (text) => {
         if (this.config.mode === "development" && this.config.debug) {
-          console.log(chalk__default.green(text));
+          console.log(kolorist.green(text));
         }
       }
     });

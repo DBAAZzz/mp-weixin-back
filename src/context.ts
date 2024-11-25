@@ -1,7 +1,7 @@
 import path from 'path'
 import fs from 'fs'
 import JSON5 from 'json5'
-import chalk from 'chalk'
+import { red, white, green } from 'kolorist'
 import { ContextConfig, PagesJson } from '../types'
 import { transformVueFile } from '../utils'
 
@@ -10,14 +10,14 @@ export class pageContext {
   pages: string[] = []
   log = {
     info: (text: string) => {
-      console.log(chalk.white(text))
+      console.log(white(text))
     },
     error: (text: string) => {
-      console.log(chalk.red(text))
+      console.log(red(text))
     },
     devLog: (text: string) => {
       if (this.config.mode === 'development' && this.config.debug) {
-        console.log(chalk.green(text))
+        console.log(green(text))
       }
     },
   }

@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import JSON5 from 'json5';
-import chalk from 'chalk';
+import { white, red, green } from 'kolorist';
 import generate from '@babel/generator';
 import { parse } from '@vue/compiler-sfc';
 import { babelParse, walkAST } from 'ast-kit';
@@ -55,14 +55,17 @@ async function transformVueFile(code, id) {
           const callback = node.expression.arguments[0];
           const backArguments = node.expression.arguments[1];
           if (backArguments && backArguments.type == "ObjectExpression") {
-            const config = new Function(`return (${generate(backArguments).code});`)();
+            const config = new Function(
+              // @ts-ignore
+              `return (${(generate.default ? generate.default : generate)(backArguments).code});`
+            )();
             pageBackConfig = { ...pageBackConfig, ...config };
           }
           if (callback && (callback.type === "ArrowFunctionExpression" || callback.type === "FunctionExpression")) {
             const body = callback.body;
             if (body.type === "BlockStatement") {
               body.body.forEach((statement) => {
-                callbackCode += generate(statement).code;
+                callbackCode += (generate.default ? generate.default : generate)(statement).code;
               });
             }
           }
@@ -140,14 +143,14 @@ class pageContext {
     __publicField(this, "pages", []);
     __publicField(this, "log", {
       info: (text) => {
-        console.log(chalk.white(text));
+        console.log(white(text));
       },
       error: (text) => {
-        console.log(chalk.red(text));
+        console.log(red(text));
       },
       devLog: (text) => {
         if (this.config.mode === "development" && this.config.debug) {
-          console.log(chalk.green(text));
+          console.log(green(text));
         }
       }
     });
