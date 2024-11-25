@@ -31,12 +31,15 @@ export class pageContext {
         this.pages.push(...mainPages)
       }
       if (subpackages) {
-        const root = subpackages.root
-        const subPages = subpackages.pages.reduce((acc: string[], current) => {
-          acc.push(`${root}/${current.path}`.replace('//', '/'))
-          return acc
-        }, [])
-        this.pages.push(...subPages)
+        for (let i = 0; i < subpackages.length; i++) {
+          const element = subpackages[i];
+          const root = element.root
+          const subPages = element.pages.reduce((acc: string[], current) => {
+            acc.push(`${root}/${current.path}`.replace('//', '/'))
+            return acc
+          }, [])
+          this.pages.push(...subPages)
+        } 
       }
     } catch (error) {
       console.error('读取pages.json文件失败')

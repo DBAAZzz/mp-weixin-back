@@ -31,5 +31,5 @@ type Pages = { path: string }[]
 
 export type PagesJson = {
   pages: Pages
-  subpackages: { root: string; pages: Pages }
+  subpackages: { root: string; pages: Pages }[]
 }
