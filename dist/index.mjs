@@ -1,18 +1,9 @@
-'use strict';
-
-const path = require('path');
-const fs = require('fs');
-const JSON5 = require('json5');
-const generate = require('@babel/generator');
-const compilerSfc = require('@vue/compiler-sfc');
-const astKit = require('ast-kit');
-
-function _interopDefaultCompat (e) { return e && typeof e === 'object' && 'default' in e ? e.default : e; }
-
-const path__default = /*#__PURE__*/_interopDefaultCompat(path);
-const fs__default = /*#__PURE__*/_interopDefaultCompat(fs);
-const JSON5__default = /*#__PURE__*/_interopDefaultCompat(JSON5);
-const generate__default = /*#__PURE__*/_interopDefaultCompat(generate);
+import path from 'path';
+import fs from 'fs';
+import JSON5 from 'json5';
+import generate from '@babel/generator';
+import { parse } from '@vue/compiler-sfc';
+import { babelParse, walkAST } from 'ast-kit';
 
 const virtualFileId = "mp-weixin-back-helper";
 
@@ -23,7 +14,7 @@ function isArrowFunction(func) {
 }
 async function parseSFC(code) {
   try {
-    return compilerSfc.parse(code).descriptor;
+    return parse(code).descriptor;
   } catch (error) {
     throw new Error(`\u89E3\u6790vue\u6587\u4EF6\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u6587\u4EF6\u662F\u5426\u6B63\u786E`);
   }
@@ -38,11 +29,11 @@ async function transformVueFile(code, id) {
   const componentStr = '<page-container :show="__MP_BACK_SHOW_PAGE_CONTAINER__" :overlay="false" @beforeleave="onBeforeLeave" :z-index="1" :duration="false"></page-container>';
   const sfc = await parseSFC(code);
   const setupCode = sfc.scriptSetup?.loc.source;
-  const setupAst = astKit.babelParse(setupCode || "", sfc.scriptSetup?.lang);
+  const setupAst = babelParse(setupCode || "", sfc.scriptSetup?.lang);
   let pageBackConfig = this.config;
   let hasPageBack = false, hasImportRef = false, pageBackFnName = "onPageBack", callbackCode = ``;
   if (setupAst) {
-    astKit.walkAST(setupAst, {
+    walkAST(setupAst, {
       enter(node) {
         if (node.type == "ImportDeclaration" && node.source.value.includes(virtualFileId)) {
           const importSpecifier = node.specifiers[0];
@@ -63,14 +54,14 @@ async function transformVueFile(code, id) {
           const callback = node.expression.arguments[0];
           const backArguments = node.expression.arguments[1];
           if (backArguments && backArguments.type == "ObjectExpression") {
-            const config = new Function(`return (${generate__default(backArguments).code});`)();
+            const config = new Function(`return (${generate(backArguments).code});`)();
             pageBackConfig = { ...pageBackConfig, ...config };
           }
           if (callback && (callback.type === "ArrowFunctionExpression" || callback.type === "FunctionExpression")) {
             const body = callback.body;
             if (body.type === "BlockStatement") {
               body.body.forEach((statement) => {
-                callbackCode += generate__default(statement).code;
+                callbackCode += generate(statement).code;
               });
             }
           }
@@ -148,17 +139,17 @@ class pageContext {
     this.config = config;
   }
   getPagesJsonPath() {
-    const pagesJsonPath = path__default.join(this.config.root, "src/pages.json");
+    const pagesJsonPath = path.join(this.config.root, "src/pages.json");
     return pagesJsonPath;
   }
   // 获取页面配置详情
   async getPagesJsonInfo() {
-    const hasPagesJson = fs__default.existsSync(this.getPagesJsonPath());
+    const hasPagesJson = fs.existsSync(this.getPagesJsonPath());
     if (!hasPagesJson)
       return;
     try {
-      const content = await fs__default.promises.readFile(this.getPagesJsonPath(), "utf-8");
-      const pagesContent = JSON5__default.parse(content);
+      const content = await fs.promises.readFile(this.getPagesJsonPath(), "utf-8");
+      const pagesContent = JSON5.parse(content);
       const { pages, subpackages } = pagesContent;
       if (pages) {
         const mainPages = pages.reduce((acc, current) => {
@@ -228,4 +219,4 @@ function MpBackPlugin(userOptions = {}) {
   };
 }
 
-module.exports = MpBackPlugin;
+export { MpBackPlugin as default };
