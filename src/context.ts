@@ -1,12 +1,26 @@
 import path from 'path'
 import fs from 'fs'
 import JSON5 from 'json5'
+import chalk from 'chalk'
 import { ContextConfig, PagesJson } from '../types'
 import { transformVueFile } from '../utils'
 
 export class pageContext {
   config: ContextConfig
   pages: string[] = []
+  log = {
+    info: (text: string) => {
+      console.log(chalk.white(text))
+    },
+    error: (text: string) => {
+      console.log(chalk.red(text))
+    },
+    devLog: (text: string) => {
+      if (this.config.mode === 'development' && this.config.debug) {
+        console.log(chalk.green(text))
+      }
+    },
+  }
 
   constructor(config: ContextConfig) {
     this.config = config
@@ -32,18 +46,18 @@ export class pageContext {
       }
       if (subpackages) {
         for (let i = 0; i < subpackages.length; i++) {
-          const element = subpackages[i];
+          const element = subpackages[i]
           const root = element.root
           const subPages = element.pages.reduce((acc: string[], current) => {
             acc.push(`${root}/${current.path}`.replace('//', '/'))
             return acc
           }, [])
           this.pages.push(...subPages)
-        } 
+        }
       }
-    } catch (error) {
-      console.error('读取pages.json文件失败')
-      console.error(error)
+    } catch (error: unknown) {
+      this.log.error('读取pages.json文件失败')
+      this.log.devLog(String(error))
     }
   }
   // 获取指定id的page

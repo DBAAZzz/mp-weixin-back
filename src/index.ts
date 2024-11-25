@@ -9,6 +9,7 @@ function MpBackPlugin(userOptions: UserOptions = {}): Plugin {
   const defaultOptions: Config = {
     preventDefault: false,
     frequency: 1,
+    debug: false,
   }
   const options = { ...defaultOptions, ...userOptions }
 

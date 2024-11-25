@@ -94,6 +94,8 @@ export async function transformVueFile(this: pageContext, code: string, id: stri
 
   if (!hasPageBack) return
 
+  this.log.devLog(`页面${this.getPageById(id)}注入mp-weixin-back`)
+
   // 不阻止默认行为就返回到上一层
   if (!pageBackConfig.preventDefault) {
     callbackCode += `uni.navigateBack({ delta: 1 });`

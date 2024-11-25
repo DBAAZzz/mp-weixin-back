@@ -10,6 +10,10 @@ export type Config = {
    */
   frequency: number
   /**
+   * 调试模式
+   */
+  debug: boolean
+  /**
    * 页面回退时触发
    */
   onPageBack?: (params: BackParams) => void
