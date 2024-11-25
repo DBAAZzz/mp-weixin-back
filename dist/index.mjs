@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import JSON5 from 'json5';
+import chalk from 'chalk';
 import generate from '@babel/generator';
 import { parse } from '@vue/compiler-sfc';
 import { babelParse, walkAST } from 'ast-kit';
@@ -71,6 +72,7 @@ async function transformVueFile(code, id) {
   }
   if (!hasPageBack)
     return;
+  this.log.devLog(`\u9875\u9762${this.getPageById(id)}\u6CE8\u5165mp-weixin-back`);
   if (!pageBackConfig.preventDefault) {
     callbackCode += `uni.navigateBack({ delta: 1 });`;
   }
@@ -136,6 +138,19 @@ class pageContext {
   constructor(config) {
     __publicField(this, "config");
     __publicField(this, "pages", []);
+    __publicField(this, "log", {
+      info: (text) => {
+        console.log(chalk.white(text));
+      },
+      error: (text) => {
+        console.log(chalk.red(text));
+      },
+      devLog: (text) => {
+        if (this.config.mode === "development" && this.config.debug) {
+          console.log(chalk.green(text));
+        }
+      }
+    });
     this.config = config;
   }
   getPagesJsonPath() {
@@ -159,16 +174,19 @@ class pageContext {
         this.pages.push(...mainPages);
       }
       if (subpackages) {
-        const root = subpackages.root;
-        const subPages = subpackages.pages.reduce((acc, current) => {
-          acc.push(`${root}/${current.path}`.replace("//", "/"));
-          return acc;
-        }, []);
-        this.pages.push(...subPages);
+        for (let i = 0; i < subpackages.length; i++) {
+          const element = subpackages[i];
+          const root = element.root;
+          const subPages = element.pages.reduce((acc, current) => {
+            acc.push(`${root}/${current.path}`.replace("//", "/"));
+            return acc;
+          }, []);
+          this.pages.push(...subPages);
+        }
       }
     } catch (error) {
-      console.error("\u8BFB\u53D6pages.json\u6587\u4EF6\u5931\u8D25");
-      console.error(error);
+      this.log.error("\u8BFB\u53D6pages.json\u6587\u4EF6\u5931\u8D25");
+      this.log.devLog(String(error));
     }
   }
   // 获取指定id的page
@@ -186,7 +204,8 @@ function MpBackPlugin(userOptions = {}) {
   let context;
   const defaultOptions = {
     preventDefault: false,
-    frequency: 1
+    frequency: 1,
+    debug: false
   };
   const options = { ...defaultOptions, ...userOptions };
   return {

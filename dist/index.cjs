@@ -3,6 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const JSON5 = require('json5');
+const chalk = require('chalk');
 const generate = require('@babel/generator');
 const compilerSfc = require('@vue/compiler-sfc');
 const astKit = require('ast-kit');
@@ -12,6 +13,7 @@ function _interopDefaultCompat (e) { return e && typeof e === 'object' && 'defau
 const path__default = /*#__PURE__*/_interopDefaultCompat(path);
 const fs__default = /*#__PURE__*/_interopDefaultCompat(fs);
 const JSON5__default = /*#__PURE__*/_interopDefaultCompat(JSON5);
+const chalk__default = /*#__PURE__*/_interopDefaultCompat(chalk);
 const generate__default = /*#__PURE__*/_interopDefaultCompat(generate);
 
 const virtualFileId = "mp-weixin-back-helper";
@@ -80,6 +82,7 @@ async function transformVueFile(code, id) {
   }
   if (!hasPageBack)
     return;
+  this.log.devLog(`\u9875\u9762${this.getPageById(id)}\u6CE8\u5165mp-weixin-back`);
   if (!pageBackConfig.preventDefault) {
     callbackCode += `uni.navigateBack({ delta: 1 });`;
   }
@@ -145,6 +148,19 @@ class pageContext {
   constructor(config) {
     __publicField(this, "config");
     __publicField(this, "pages", []);
+    __publicField(this, "log", {
+      info: (text) => {
+        console.log(chalk__default.white(text));
+      },
+      error: (text) => {
+        console.log(chalk__default.red(text));
+      },
+      devLog: (text) => {
+        if (this.config.mode === "development" && this.config.debug) {
+          console.log(chalk__default.green(text));
+        }
+      }
+    });
     this.config = config;
   }
   getPagesJsonPath() {
@@ -168,16 +184,19 @@ class pageContext {
         this.pages.push(...mainPages);
       }
       if (subpackages) {
-        const root = subpackages.root;
-        const subPages = subpackages.pages.reduce((acc, current) => {
-          acc.push(`${root}/${current.path}`.replace("//", "/"));
-          return acc;
-        }, []);
-        this.pages.push(...subPages);
+        for (let i = 0; i < subpackages.length; i++) {
+          const element = subpackages[i];
+          const root = element.root;
+          const subPages = element.pages.reduce((acc, current) => {
+            acc.push(`${root}/${current.path}`.replace("//", "/"));
+            return acc;
+          }, []);
+          this.pages.push(...subPages);
+        }
       }
     } catch (error) {
-      console.error("\u8BFB\u53D6pages.json\u6587\u4EF6\u5931\u8D25");
-      console.error(error);
+      this.log.error("\u8BFB\u53D6pages.json\u6587\u4EF6\u5931\u8D25");
+      this.log.devLog(String(error));
     }
   }
   // 获取指定id的page
@@ -195,7 +214,8 @@ function MpBackPlugin(userOptions = {}) {
   let context;
   const defaultOptions = {
     preventDefault: false,
-    frequency: 1
+    frequency: 1,
+    debug: false
   };
   const options = { ...defaultOptions, ...userOptions };
   return {
