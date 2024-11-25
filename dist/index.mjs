@@ -5,6 +5,7 @@ import { white, red, green } from 'kolorist';
 import generate from '@babel/generator';
 import { parse } from '@vue/compiler-sfc';
 import { babelParse, walkAST } from 'ast-kit';
+import MagicString from 'magic-string';
 
 const virtualFileId = "mp-weixin-back-helper";
 
@@ -21,52 +22,55 @@ async function parseSFC(code) {
   }
 }
 async function transformVueFile(code, id) {
-  if (code.includes("<page-container")) {
-    return code;
-  }
-  if (!code.includes("<template")) {
-    return code;
-  }
-  const componentStr = '<page-container :show="__MP_BACK_SHOW_PAGE_CONTAINER__" :overlay="false" @beforeleave="onBeforeLeave" :z-index="1" :duration="false"></page-container>';
   const sfc = await parseSFC(code);
-  const setupCode = sfc.scriptSetup?.loc.source;
-  const setupAst = babelParse(setupCode || "", sfc.scriptSetup?.lang);
-  let pageBackConfig = this.config;
-  let hasPageBack = false, hasImportRef = false, pageBackFnName = "onPageBack", callbackCode = ``;
+  if (!sfc.template?.content) {
+    return code;
+  }
+  const componentStr = '  <page-container :show="__MP_BACK_SHOW_PAGE_CONTAINER__" :overlay="false" @beforeleave="onBeforeLeave" :z-index="1" :duration="false"></page-container>\n';
+  let pageBackConfig = { ...this.config };
+  let hasPageBack = false;
+  let hasImportRef = false;
+  let pageBackFnName = "onPageBack";
+  let callbackCode = ``;
+  const codeMs = new MagicString(code);
+  const setupCode = sfc.scriptSetup?.loc.source || "";
+  const setupAst = babelParse(setupCode, sfc.scriptSetup?.lang);
   if (setupAst) {
     walkAST(setupAst, {
       enter(node) {
-        if (node.type == "ImportDeclaration" && node.source.value.includes(virtualFileId)) {
-          const importSpecifier = node.specifiers[0];
-          hasPageBack = true;
-          pageBackFnName = importSpecifier.local.name;
-        }
-        if (node.type == "ImportDeclaration" && node.source.value === "vue") {
-          const importSpecifiers = node.specifiers;
-          for (let i = 0; i < importSpecifiers.length; i++) {
-            const element = importSpecifiers[i];
-            if (element.local.name == "ref") {
-              hasImportRef = true;
-              break;
-            }
+        if (node.type === "ImportDeclaration") {
+          if (node.source.value.includes(virtualFileId)) {
+            const importSpecifier = node.specifiers[0];
+            hasPageBack = true;
+            pageBackFnName = importSpecifier.local.name;
+          }
+          if (node.source.value === "vue") {
+            node.specifiers.some((specifier) => {
+              if (specifier.local.name === "ref") {
+                hasImportRef = true;
+                return true;
+              }
+              return false;
+            });
           }
         }
-        if (node.type == "ExpressionStatement" && node.expression.type == "CallExpression" && node.expression.callee.loc?.identifierName == pageBackFnName) {
+        if (node.type === "ExpressionStatement" && node.expression.type === "CallExpression" && node.expression.callee.loc?.identifierName === pageBackFnName) {
           const callback = node.expression.arguments[0];
           const backArguments = node.expression.arguments[1];
-          if (backArguments && backArguments.type == "ObjectExpression") {
+          if (backArguments?.type === "ObjectExpression") {
             const config = new Function(
               // @ts-ignore
               `return (${(generate.default ? generate.default : generate)(backArguments).code});`
             )();
-            pageBackConfig = { ...pageBackConfig, ...config };
+            Object.assign(pageBackConfig, config);
           }
           if (callback && (callback.type === "ArrowFunctionExpression" || callback.type === "FunctionExpression")) {
             const body = callback.body;
             if (body.type === "BlockStatement") {
-              body.body.forEach((statement) => {
-                callbackCode += (generate.default ? generate.default : generate)(statement).code;
-              });
+              callbackCode += body.body.map(
+                // @ts-ignore
+                (statement) => (generate.default ? generate.default : generate)(statement).code
+              ).join("");
             }
           }
         }
@@ -76,23 +80,25 @@ async function transformVueFile(code, id) {
   if (!hasPageBack)
     return;
   this.log.devLog(`\u9875\u9762${this.getPageById(id)}\u6CE8\u5165mp-weixin-back`);
+  if (code.includes("<page-container")) {
+    this.log.devLog(`${this.getPageById(id)}\u9875\u9762\u5DF2\u6709page-container\u7EC4\u4EF6\uFF0C\u6CE8\u5165\u5931\u8D25`);
+    return code;
+  }
   if (!pageBackConfig.preventDefault) {
     callbackCode += `uni.navigateBack({ delta: 1 });`;
   }
   const configBack = (() => {
-    if (!pageBackConfig.onPageBack)
+    const onPageBack = pageBackConfig.onPageBack;
+    if (!onPageBack)
       return "";
-    if (typeof pageBackConfig.onPageBack !== "function") {
+    if (typeof onPageBack !== "function") {
       throw new Error("`onPageBack` must be a function");
     }
-    const params = JSON.stringify({
-      page: this.getPageById(id)
-    });
-    const hasFunction = pageBackConfig.onPageBack.toString().includes("function");
-    if (isArrowFunction(pageBackConfig.onPageBack) || hasFunction) {
-      return `(${pageBackConfig.onPageBack})(${params});`;
+    const params = JSON.stringify({ page: this.getPageById(id) });
+    if (isArrowFunction(onPageBack) || onPageBack.toString().includes("function")) {
+      return `(${onPageBack})(${params});`;
     }
-    return `(function ${pageBackConfig.onPageBack})()`;
+    return `(function ${onPageBack})()`;
   })();
   const beforeLeaveStr = `
     ${!hasImportRef ? "import { ref } from 'vue'" : ""}
@@ -102,33 +108,34 @@ async function transformVueFile(code, id) {
       console.log("__MP_BACK_FREQUENCY__", __MP_BACK_FREQUENCY__, ${pageBackConfig.frequency})
       if (__MP_BACK_FREQUENCY__ < ${pageBackConfig.frequency}) {
         __MP_BACK_SHOW_PAGE_CONTAINER__.value = false
-        setTimeout(() => {
-          __MP_BACK_SHOW_PAGE_CONTAINER__.value = true
-        }, 0);
+        setTimeout(() => __MP_BACK_SHOW_PAGE_CONTAINER__.value = true, 0);
         __MP_BACK_FREQUENCY__++
       }
-      // \u8FD0\u884C\u914D\u7F6E\u7684\u533F\u540D\u51FD\u6570
       ${configBack}
       ${callbackCode}
     };
   `;
-  const result = code.replace(
-    /(<template.*?>)([\s\S]*?)(<\/template>)([\s\S]*?)(<script\s+(?:lang="ts"\s+)?setup.*?>|$)/,
-    (match, templateStart, templateContent, templateEnd, middleContent, scriptSetup) => {
-      const hasScriptSetup = Boolean(scriptSetup);
-      const scriptStartTag = hasScriptSetup ? scriptSetup : "<script setup>";
-      const scriptEndTag = hasScriptSetup ? "" : "<\/script>";
-      const injectedTemplate = `${templateStart}${templateContent}
- ${componentStr}
-${templateEnd}`;
-      const injectedScript = `
-${middleContent}${scriptStartTag}
-${beforeLeaveStr}
-${scriptEndTag}`;
-      return injectedTemplate + injectedScript;
-    }
-  );
-  return result;
+  const { template, script, scriptSetup } = sfc;
+  const tempOffsets = {
+    start: template.loc.start.offset,
+    end: template.loc.end.offset,
+    content: template.content
+  };
+  const templateMagicString = new MagicString(tempOffsets.content);
+  templateMagicString.append(componentStr);
+  codeMs.overwrite(tempOffsets.start, tempOffsets.end, templateMagicString.toString());
+  const scriptSfc = script || scriptSetup;
+  if (!scriptSfc)
+    return;
+  const scriptOffsets = {
+    start: scriptSfc.loc.start.offset,
+    end: scriptSfc.loc.end.offset,
+    content: scriptSfc.content || ""
+  };
+  const scriptMagicString = new MagicString(scriptOffsets.content);
+  scriptMagicString.prepend(beforeLeaveStr);
+  codeMs.overwrite(scriptOffsets.start, scriptOffsets.end, scriptMagicString.toString());
+  return codeMs.toString();
 }
 
 var __defProp = Object.defineProperty;

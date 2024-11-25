@@ -2,6 +2,7 @@ import generate from '@babel/generator'
 import { parse } from '@vue/compiler-sfc'
 import { babelParse, walkAST } from 'ast-kit'
 import { pageContext } from '../src/context'
+import MagicString from 'magic-string'
 import { virtualFileId } from './constant'
 import type { SFCDescriptor } from '@vue/compiler-sfc'
 import type { Node } from '@babel/types'
@@ -20,62 +21,58 @@ async function parseSFC(code: string): Promise<SFCDescriptor> {
 }
 
 export async function transformVueFile(this: pageContext, code: string, id: string) {
-  // 检查代码中是否已经包含page-container组件
-  if (code.includes('<page-container')) {
-    return code
-  }
-
-  // 检查是否包含template标签
-  if (!code.includes('<template')) {
+  const sfc = await parseSFC(code)
+  if (!sfc.template?.content) {
     return code
   }
 
   const componentStr =
-    '<page-container :show="__MP_BACK_SHOW_PAGE_CONTAINER__" :overlay="false" @beforeleave="onBeforeLeave" :z-index="1" :duration="false"></page-container>'
+    '  <page-container :show="__MP_BACK_SHOW_PAGE_CONTAINER__" :overlay="false" @beforeleave="onBeforeLeave" :z-index="1" :duration="false"></page-container>\n'
 
-  const sfc = await parseSFC(code)
-  const setupCode = sfc.scriptSetup?.loc.source
-  const setupAst = babelParse(setupCode || '', sfc.scriptSetup?.lang)
-  let pageBackConfig = this.config
-  let hasPageBack = false,
-    hasImportRef = false,
-    pageBackFnName = 'onPageBack',
-    callbackCode = ``
+  let pageBackConfig = { ...this.config }
+  let hasPageBack = false
+  let hasImportRef = false
+  let pageBackFnName = 'onPageBack'
+  let callbackCode = ``
+
+  const codeMs = new MagicString(code)
+  const setupCode = sfc.scriptSetup?.loc.source || ''
+  const setupAst = babelParse(setupCode, sfc.scriptSetup?.lang)
 
   if (setupAst) {
     walkAST<Node>(setupAst, {
       enter(node) {
-        if (node.type == 'ImportDeclaration' && node.source.value.includes(virtualFileId)) {
-          const importSpecifier = node.specifiers[0]
-          hasPageBack = true
-          pageBackFnName = importSpecifier.local.name
-        }
-
-        if (node.type == 'ImportDeclaration' && node.source.value === 'vue') {
-          const importSpecifiers = node.specifiers
-          for (let i = 0; i < importSpecifiers.length; i++) {
-            const element = importSpecifiers[i]
-            if (element.local.name == 'ref') {
-              hasImportRef = true
-              break
-            }
+        if (node.type === 'ImportDeclaration') {
+          if (node.source.value.includes(virtualFileId)) {
+            const importSpecifier = node.specifiers[0]
+            hasPageBack = true
+            pageBackFnName = importSpecifier.local.name
+          }
+          if (node.source.value === 'vue') {
+            node.specifiers.some((specifier) => {
+              if (specifier.local.name === 'ref') {
+                hasImportRef = true
+                return true
+              }
+              return false
+            })
           }
         }
 
         if (
-          node.type == 'ExpressionStatement' &&
-          node.expression.type == 'CallExpression' &&
-          node.expression.callee.loc?.identifierName == pageBackFnName
+          node.type === 'ExpressionStatement' &&
+          node.expression.type === 'CallExpression' &&
+          node.expression.callee.loc?.identifierName === pageBackFnName
         ) {
-          const callback = node.expression.arguments[0] // 获取第一个参数
+          const callback = node.expression.arguments[0]
           const backArguments = node.expression.arguments[1]
-          // 第二个参数为object才有效，覆盖插件传入的配置
-          if (backArguments && backArguments.type == 'ObjectExpression') {
+
+          if (backArguments?.type === 'ObjectExpression') {
             const config = new Function(
               // @ts-ignore
               `return (${(generate.default ? generate.default : generate)(backArguments).code});`
             )()
-            pageBackConfig = { ...pageBackConfig, ...config }
+            Object.assign(pageBackConfig, config)
           }
 
           if (
@@ -84,11 +81,12 @@ export async function transformVueFile(this: pageContext, code: string, id: stri
           ) {
             const body = callback.body
             if (body.type === 'BlockStatement') {
-              // 遍历 BlockStatement 的内容
-              body.body.forEach((statement) => {
-                // @ts-ignore
-                callbackCode += (generate.default ? generate.default : generate)(statement).code // 将 AST 节点生成代码
-              })
+              callbackCode += body.body
+                .map(
+                  // @ts-ignore
+                  (statement) => (generate.default ? generate.default : generate)(statement).code
+                )
+                .join('')
             }
           }
         }
@@ -100,29 +98,29 @@ export async function transformVueFile(this: pageContext, code: string, id: stri
 
   this.log.devLog(`页面${this.getPageById(id)}注入mp-weixin-back`)
 
-  // 不阻止默认行为就返回到上一层
+  if (code.includes('<page-container')) {
+    this.log.devLog(`${this.getPageById(id)}页面已有page-container组件，注入失败`)
+    return code
+  }
+
   if (!pageBackConfig.preventDefault) {
     callbackCode += `uni.navigateBack({ delta: 1 });`
   }
 
-  // 处理统一的返回方法
   const configBack = (() => {
-    if (!pageBackConfig.onPageBack) return ''
-    if (typeof pageBackConfig.onPageBack !== 'function') {
+    const onPageBack = pageBackConfig.onPageBack
+    if (!onPageBack) return ''
+    if (typeof onPageBack !== 'function') {
       throw new Error('`onPageBack` must be a function')
     }
 
-    const params = JSON.stringify({
-      page: this.getPageById(id),
-    })
+    const params = JSON.stringify({ page: this.getPageById(id) })
 
-    const hasFunction = pageBackConfig.onPageBack.toString().includes('function')
-
-    if (isArrowFunction(pageBackConfig.onPageBack) || hasFunction) {
-      return `(${pageBackConfig.onPageBack})(${params});`
+    if (isArrowFunction(onPageBack) || onPageBack.toString().includes('function')) {
+      return `(${onPageBack})(${params});`
     }
 
-    return `(function ${pageBackConfig.onPageBack})()`
+    return `(function ${onPageBack})()`
   })()
 
   const beforeLeaveStr = `
@@ -133,33 +131,37 @@ export async function transformVueFile(this: pageContext, code: string, id: stri
       console.log("__MP_BACK_FREQUENCY__", __MP_BACK_FREQUENCY__, ${pageBackConfig.frequency})
       if (__MP_BACK_FREQUENCY__ < ${pageBackConfig.frequency}) {
         __MP_BACK_SHOW_PAGE_CONTAINER__.value = false
-        setTimeout(() => {
-          __MP_BACK_SHOW_PAGE_CONTAINER__.value = true
-        }, 0);
+        setTimeout(() => __MP_BACK_SHOW_PAGE_CONTAINER__.value = true, 0);
         __MP_BACK_FREQUENCY__++
       }
-      // 运行配置的匿名函数
       ${configBack}
       ${callbackCode}
     };
   `
 
-  // 在template标签后插入page-container组件和script setup声明
-  const result = code.replace(
-    /(<template.*?>)([\s\S]*?)(<\/template>)([\s\S]*?)(<script\s+(?:lang="ts"\s+)?setup.*?>|$)/,
-    (match, templateStart, templateContent, templateEnd, middleContent, scriptSetup) => {
-      // 处理script setup标签
-      const hasScriptSetup = Boolean(scriptSetup)
-      const scriptStartTag = hasScriptSetup ? scriptSetup : '<script setup>'
-      const scriptEndTag = hasScriptSetup ? '' : '</script>'
+  const { template, script, scriptSetup } = sfc
+  const tempOffsets = {
+    start: template.loc.start.offset,
+    end: template.loc.end.offset,
+    content: template.content,
+  }
 
-      // 构建注入的内容
-      const injectedTemplate = `${templateStart}${templateContent}\n ${componentStr}\n${templateEnd}`
-      const injectedScript = `\n${middleContent}${scriptStartTag}\n${beforeLeaveStr}\n${scriptEndTag}`
+  const templateMagicString = new MagicString(tempOffsets.content)
+  templateMagicString.append(componentStr)
+  codeMs.overwrite(tempOffsets.start, tempOffsets.end, templateMagicString.toString())
 
-      return injectedTemplate + injectedScript
-    }
-  )
+  const scriptSfc = script || scriptSetup
+  if (!scriptSfc) return
 
-  return result
+  const scriptOffsets = {
+    start: scriptSfc.loc.start.offset,
+    end: scriptSfc.loc.end.offset,
+    content: scriptSfc.content || '',
+  }
+
+  const scriptMagicString = new MagicString(scriptOffsets.content)
+  scriptMagicString.prepend(beforeLeaveStr)
+  codeMs.overwrite(scriptOffsets.start, scriptOffsets.end, scriptMagicString.toString())
+
+  return codeMs.toString()
 }
