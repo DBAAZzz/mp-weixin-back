@@ -4,8 +4,8 @@ const path = require('path');
 const fs = require('fs');
 const JSON5 = require('json5');
 const kolorist = require('kolorist');
-const generate = require('@babel/generator');
 const compilerSfc = require('@vue/compiler-sfc');
+const generate = require('@babel/generator');
 const astKit = require('ast-kit');
 const MagicString = require('magic-string');
 
@@ -19,52 +19,42 @@ const MagicString__default = /*#__PURE__*/_interopDefaultCompat(MagicString);
 
 const virtualFileId = "mp-weixin-back-helper";
 
+const pageContainerComp = '  <page-container :show="__MP_BACK_SHOW_PAGE_CONTAINER__" :overlay="false" @beforeleave="onBeforeLeave" :z-index="1" :duration="false"></page-container>\n';
 function isArrowFunction(func) {
   if (typeof func !== "function")
     return false;
   return !func.hasOwnProperty("prototype") && func.toString().includes("=>");
 }
-async function parseSFC(code) {
-  try {
-    return compilerSfc.parse(code).descriptor;
-  } catch (error) {
-    throw new Error(`\u89E3\u6790vue\u6587\u4EF6\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u6587\u4EF6\u662F\u5426\u6B63\u786E`);
-  }
-}
-async function transformVueFile(code, id) {
-  const sfc = await parseSFC(code);
-  if (!sfc.template?.content) {
-    return code;
-  }
-  const componentStr = '  <page-container :show="__MP_BACK_SHOW_PAGE_CONTAINER__" :overlay="false" @beforeleave="onBeforeLeave" :z-index="1" :duration="false"></page-container>\n';
-  let pageBackConfig = { ...this.config };
-  let hasPageBack = false;
-  let hasImportRef = false;
-  let pageBackFnName = "onPageBack";
-  let callbackCode = ``;
+function compositionWalk(context, code, sfc, id) {
   const codeMs = new MagicString__default(code);
-  const setupCode = sfc.scriptSetup?.loc.source || "";
-  const setupAst = astKit.babelParse(setupCode, sfc.scriptSetup?.lang);
+  const setupAst = astKit.babelParse(sfc.scriptSetup.loc.source, sfc.scriptSetup.lang);
+  let pageInfo = {
+    hasPageBack: false,
+    pageBackFnName: "onPageBack",
+    hasImportRef: false,
+    backConfig: { ...context.config },
+    callbackCode: ""
+  };
   if (setupAst) {
     astKit.walkAST(setupAst, {
       enter(node) {
         if (node.type === "ImportDeclaration") {
           if (node.source.value.includes(virtualFileId)) {
             const importSpecifier = node.specifiers[0];
-            hasPageBack = true;
-            pageBackFnName = importSpecifier.local.name;
+            pageInfo.hasPageBack = true;
+            pageInfo.pageBackFnName = importSpecifier.local.name;
           }
           if (node.source.value === "vue") {
             node.specifiers.some((specifier) => {
               if (specifier.local.name === "ref") {
-                hasImportRef = true;
+                pageInfo.hasImportRef = true;
                 return true;
               }
               return false;
             });
           }
         }
-        if (node.type === "ExpressionStatement" && node.expression.type === "CallExpression" && node.expression.callee.loc?.identifierName === pageBackFnName) {
+        if (node.type === "ExpressionStatement" && node.expression.type === "CallExpression" && node.expression.callee.loc?.identifierName === pageInfo.pageBackFnName) {
           const callback = node.expression.arguments[0];
           const backArguments = node.expression.arguments[1];
           if (backArguments?.type === "ObjectExpression") {
@@ -72,12 +62,12 @@ async function transformVueFile(code, id) {
               // @ts-ignore
               `return (${(generate__default.default ? generate__default.default : generate__default)(backArguments).code});`
             )();
-            Object.assign(pageBackConfig, config);
+            Object.assign(pageInfo.backConfig, config);
           }
           if (callback && (callback.type === "ArrowFunctionExpression" || callback.type === "FunctionExpression")) {
             const body = callback.body;
             if (body.type === "BlockStatement") {
-              callbackCode += body.body.map(
+              pageInfo.callbackCode += body.body.map(
                 // @ts-ignore
                 (statement) => (generate__default.default ? generate__default.default : generate__default)(statement).code
               ).join("");
@@ -87,65 +77,266 @@ async function transformVueFile(code, id) {
       }
     });
   }
-  if (!hasPageBack)
-    return;
-  this.log.devLog(`\u9875\u9762${this.getPageById(id)}\u6CE8\u5165mp-weixin-back`);
+  if (!pageInfo.hasPageBack)
+    return code;
   if (code.includes("<page-container")) {
-    this.log.devLog(`${this.getPageById(id)}\u9875\u9762\u5DF2\u6709page-container\u7EC4\u4EF6\uFF0C\u6CE8\u5165\u5931\u8D25`);
+    context.log.debugLog(`${context.getPageById(id)}\u9875\u9762\u5DF2\u6709page-container\u7EC4\u4EF6\uFF0C\u6CE8\u5165\u5931\u8D25`);
     return code;
   }
-  if (!pageBackConfig.preventDefault) {
-    callbackCode += `uni.navigateBack({ delta: 1 });`;
+  if (!pageInfo.backConfig.preventDefault) {
+    pageInfo.callbackCode += "uni.navigateBack({ delta: 1 });";
   }
+  const importRefFromVue = !pageInfo.hasImportRef ? `import { ref } from 'vue'` : "";
+  const stateFrequency = "let __MP_BACK_FREQUENCY__ = 1;";
+  const statePageContainerVar = "const __MP_BACK_SHOW_PAGE_CONTAINER__ = ref(true);";
   const configBack = (() => {
-    const onPageBack = pageBackConfig.onPageBack;
+    const onPageBack = pageInfo.backConfig.onPageBack;
     if (!onPageBack)
       return "";
     if (typeof onPageBack !== "function") {
       throw new Error("`onPageBack` must be a function");
     }
-    const params = JSON.stringify({ page: this.getPageById(id) });
+    const params = JSON.stringify({ page: context.getPageById(id) });
     if (isArrowFunction(onPageBack) || onPageBack.toString().includes("function")) {
       return `(${onPageBack})(${params});`;
     }
     return `(function ${onPageBack})()`;
   })();
-  const beforeLeaveStr = `
-    ${!hasImportRef ? "import { ref } from 'vue'" : ""}
-    let __MP_BACK_FREQUENCY__ = 1
-    const __MP_BACK_SHOW_PAGE_CONTAINER__ = ref(true);
+  const stateBeforeLeave = `
     const onBeforeLeave = () => {
-      console.log("__MP_BACK_FREQUENCY__", __MP_BACK_FREQUENCY__, ${pageBackConfig.frequency})
-      if (__MP_BACK_FREQUENCY__ < ${pageBackConfig.frequency}) {
+      if (__MP_BACK_FREQUENCY__ < ${pageInfo.backConfig.frequency}) {
         __MP_BACK_SHOW_PAGE_CONTAINER__.value = false
         setTimeout(() => __MP_BACK_SHOW_PAGE_CONTAINER__.value = true, 0);
         __MP_BACK_FREQUENCY__++
       }
       ${configBack}
-      ${callbackCode}
+      ${pageInfo.callbackCode}
     };
   `;
-  const { template, script, scriptSetup } = sfc;
+  const { template, scriptSetup } = sfc;
   const tempOffsets = {
     start: template.loc.start.offset,
     end: template.loc.end.offset,
     content: template.content
   };
   const templateMagicString = new MagicString__default(tempOffsets.content);
-  templateMagicString.append(componentStr);
+  templateMagicString.append(pageContainerComp);
   codeMs.overwrite(tempOffsets.start, tempOffsets.end, templateMagicString.toString());
-  const scriptSfc = script || scriptSetup;
-  if (!scriptSfc)
-    return;
   const scriptOffsets = {
-    start: scriptSfc.loc.start.offset,
-    end: scriptSfc.loc.end.offset,
-    content: scriptSfc.content || ""
+    start: scriptSetup.loc.start.offset,
+    end: scriptSetup.loc.end.offset,
+    content: scriptSetup.content || ""
   };
   const scriptMagicString = new MagicString__default(scriptOffsets.content);
-  scriptMagicString.prepend(beforeLeaveStr);
+  scriptMagicString.prepend(
+    ` ${importRefFromVue}
+      ${stateFrequency}
+      ${statePageContainerVar}
+      ${stateBeforeLeave} `
+  );
   codeMs.overwrite(scriptOffsets.start, scriptOffsets.end, scriptMagicString.toString());
   return codeMs.toString();
+}
+function optionsWalk(context, code, sfc, id) {
+  const codeMs = new MagicString__default(code);
+  const ast = astKit.babelParse(sfc.script.loc.source, sfc.script.lang);
+  let pageInfo = {
+    hasPageBack: false,
+    pageBackFnName: "onPageBack",
+    backConfig: { ...context.config }
+  };
+  let exportDefaultNode = null;
+  let dataMethodNode = null;
+  let methodsNode = null;
+  let onPageBackNodeMethod = null;
+  let onPageBackNodeProperty = null;
+  if (ast) {
+    astKit.walkAST(ast, {
+      enter(node) {
+        if (node.type === "ExportDefaultDeclaration" && node.declaration.type === "ObjectExpression") {
+          exportDefaultNode = node.declaration;
+          const properties = node.declaration.properties;
+          for (let i = 0; i < properties.length; i++) {
+            const element = properties[i];
+            if (element.type === "ObjectMethod" && element.key.type === "Identifier" && element.key.name === "data" && element.body.type === "BlockStatement") {
+              dataMethodNode = element.body;
+            }
+            if (element.type === "ObjectProperty" && element.key.type === "Identifier" && element.key.name === "methods") {
+              methodsNode = element.value;
+            }
+            const blockStatementCondition = element.type === "ObjectMethod" && element.key.type === "Identifier" && element.key.name === pageInfo.pageBackFnName && element.body.type === "BlockStatement";
+            const functionExpressionCondition = element.type === "ObjectProperty" && element.key.type === "Identifier" && element.key.name === pageInfo.pageBackFnName && element.value.type === "FunctionExpression";
+            if (blockStatementCondition) {
+              pageInfo.hasPageBack = true;
+              onPageBackNodeMethod = element;
+            }
+            if (functionExpressionCondition) {
+              pageInfo.hasPageBack = true;
+              onPageBackNodeProperty = element;
+            }
+          }
+        }
+      }
+    });
+  }
+  if (!pageInfo.hasPageBack)
+    return;
+  const newDataProperty = [
+    {
+      type: "ObjectProperty",
+      key: { type: "Identifier", name: "__MP_BACK_SHOW_PAGE_CONTAINER__" },
+      value: { type: "BooleanLiteral", value: true },
+      computed: false,
+      shorthand: false
+    },
+    {
+      type: "ObjectProperty",
+      key: { type: "Identifier", name: "__MP_BACK_FREQUENCY__" },
+      value: { type: "NumericLiteral", value: 1 },
+      computed: false,
+      shorthand: false
+    }
+  ];
+  if (dataMethodNode) {
+    const returnStatement = dataMethodNode.body.find(
+      (node) => node.type === "ReturnStatement"
+    );
+    if (returnStatement && returnStatement.argument && returnStatement.argument.type === "ObjectExpression") {
+      returnStatement.argument.properties.push(...newDataProperty);
+    }
+  } else if (exportDefaultNode) {
+    const addData = {
+      type: "ObjectMethod",
+      key: { type: "Identifier", name: "data" },
+      kind: "method",
+      params: [],
+      async: false,
+      generator: false,
+      computed: false,
+      body: {
+        type: "BlockStatement",
+        directives: [],
+        body: [
+          {
+            type: "ReturnStatement",
+            argument: {
+              type: "ObjectExpression",
+              properties: newDataProperty
+            }
+          }
+        ]
+      }
+    };
+    exportDefaultNode.properties.push(addData);
+  }
+  const configBack = (() => {
+    const onPageBack = pageInfo.backConfig.onPageBack;
+    if (!onPageBack)
+      return "";
+    if (typeof onPageBack !== "function") {
+      throw new Error("`onPageBack` must be a function");
+    }
+    const params = JSON.stringify({ page: context.getPageById(id) });
+    if (isArrowFunction(onPageBack) || onPageBack.toString().includes("function")) {
+      return `(${onPageBack})(${params});`;
+    }
+    return `(function ${onPageBack})()`;
+  })();
+  const stateBeforeLeave = `
+    function onBeforeLeave() {
+      if (this.__MP_BACK_FREQUENCY__ < ${pageInfo.backConfig.frequency}) {
+        this.__MP_BACK_SHOW_PAGE_CONTAINER__ = false
+        setTimeout(() => { this.__MP_BACK_SHOW_PAGE_CONTAINER__ = true }, 0);
+        this.__MP_BACK_FREQUENCY__++
+      }
+      ${configBack}
+      ${!pageInfo.backConfig.preventDefault ? "uni.navigateBack({ delta: 1 });" : ""}
+    };
+  `;
+  const stateBeforeLeaveAst = astKit.babelParse(stateBeforeLeave);
+  const stateBeforeLeaveNode = stateBeforeLeaveAst.body.find(
+    (node) => node.type === "FunctionDeclaration"
+  );
+  const newMethodsProperty = {
+    type: "ObjectMethod",
+    key: {
+      type: "Identifier",
+      name: "onBeforeLeave"
+    },
+    kind: "method",
+    generator: false,
+    async: false,
+    params: [],
+    computed: false,
+    body: {
+      type: "BlockStatement",
+      directives: [],
+      body: [
+        ...onPageBackNodeMethod ? onPageBackNodeMethod.body.body : [],
+        ...onPageBackNodeProperty ? onPageBackNodeProperty.value.body.body : [],
+        ...stateBeforeLeaveNode.body.body
+      ]
+    }
+  };
+  if (methodsNode) {
+    methodsNode.properties.push(newMethodsProperty);
+    const code2 = (generate__default.default ? generate__default.default : generate__default)(methodsNode);
+    console.log(code2);
+  } else if (exportDefaultNode) {
+    const addMethods = {
+      type: "ObjectProperty",
+      computed: false,
+      shorthand: false,
+      key: {
+        type: "Identifier",
+        name: "methods"
+      },
+      value: {
+        type: "ObjectExpression",
+        properties: [newMethodsProperty]
+      }
+    };
+    exportDefaultNode.properties.push(addMethods);
+  }
+  const { template, script } = sfc;
+  const tempOffsets = {
+    start: template.loc.start.offset,
+    end: template.loc.end.offset,
+    content: template.content
+  };
+  const templateMagicString = new MagicString__default(tempOffsets.content);
+  templateMagicString.append(pageContainerComp);
+  codeMs.overwrite(tempOffsets.start, tempOffsets.end, templateMagicString.toString());
+  const scriptOffsets = {
+    start: script.loc.start.offset,
+    end: script.loc.end.offset
+  };
+  const newScriptContent = (generate__default.default ? generate__default.default : generate__default)(ast).code;
+  codeMs.overwrite(scriptOffsets.start, scriptOffsets.end, newScriptContent);
+  return codeMs.toString();
+}
+const vueWalker = {
+  compositionWalk,
+  optionsWalk
+};
+
+async function transformVueFile(code, id) {
+  try {
+    const sfc = compilerSfc.parse(code).descriptor;
+    const { template, script, scriptSetup } = sfc;
+    if (!template?.content) {
+      return code;
+    }
+    if (!script?.content && !scriptSetup?.content) {
+      return code;
+    }
+    const walker = scriptSetup ? "compositionWalk" : "optionsWalk";
+    return vueWalker[walker](this, code, sfc, id);
+  } catch (error) {
+    this.log.error("\u89E3\u6790vue\u6587\u4EF6\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u6587\u4EF6\u662F\u5426\u6B63\u786E");
+    this.log.debugLog(String(error));
+    return code;
+  }
 }
 
 var __defProp = Object.defineProperty;
@@ -156,18 +347,19 @@ var __publicField = (obj, key, value) => {
 };
 class pageContext {
   constructor(config) {
+    __publicField(this, "logPreText", "[mp-weixin-back] : ");
     __publicField(this, "config");
     __publicField(this, "pages", []);
     __publicField(this, "log", {
       info: (text) => {
-        console.log(kolorist.white(text));
+        console.log(kolorist.white(this.logPreText + text));
       },
       error: (text) => {
-        console.log(kolorist.red(text));
+        console.log(kolorist.red(this.logPreText + text));
       },
-      devLog: (text) => {
+      debugLog: (text) => {
         if (this.config.mode === "development" && this.config.debug) {
-          console.log(kolorist.green(text));
+          console.log(kolorist.green(this.logPreText + text));
         }
       }
     });
@@ -206,7 +398,7 @@ class pageContext {
       }
     } catch (error) {
       this.log.error("\u8BFB\u53D6pages.json\u6587\u4EF6\u5931\u8D25");
-      this.log.devLog(String(error));
+      this.log.debugLog(String(error));
     }
   }
   // 获取指定id的page

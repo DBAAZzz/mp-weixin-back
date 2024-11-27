@@ -6,18 +6,19 @@ import { ContextConfig, PagesJson } from '../types'
 import { transformVueFile } from '../utils'
 
 export class pageContext {
+  private logPreText = '[mp-weixin-back] : '
   config: ContextConfig
   pages: string[] = []
   log = {
     info: (text: string) => {
-      console.log(white(text))
+      console.log(white(this.logPreText + text))
     },
     error: (text: string) => {
-      console.log(red(text))
+      console.log(red(this.logPreText + text))
     },
-    devLog: (text: string) => {
+    debugLog: (text: string) => {
       if (this.config.mode === 'development' && this.config.debug) {
-        console.log(green(text))
+        console.log(green(this.logPreText + text))
       }
     },
   }
@@ -57,7 +58,7 @@ export class pageContext {
       }
     } catch (error: unknown) {
       this.log.error('读取pages.json文件失败')
-      this.log.devLog(String(error))
+      this.log.debugLog(String(error))
     }
   }
   // 获取指定id的page
