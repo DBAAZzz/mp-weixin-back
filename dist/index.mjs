@@ -4,8 +4,8 @@ import JSON5 from 'json5';
 import { white, red, green } from 'kolorist';
 import { parse } from '@vue/compiler-sfc';
 import generate from '@babel/generator';
-import { babelParse, walkAST } from 'ast-kit';
 import MagicString from 'magic-string';
+import { babelParse, walkAST } from 'ast-kit';
 
 const virtualFileId = "mp-weixin-back-helper";
 
@@ -270,8 +270,6 @@ function optionsWalk(context, code, sfc, id) {
   };
   if (methodsNode) {
     methodsNode.properties.push(newMethodsProperty);
-    const code2 = (generate.default ? generate.default : generate)(methodsNode);
-    console.log(code2);
   } else if (exportDefaultNode) {
     const addMethods = {
       type: "ObjectProperty",

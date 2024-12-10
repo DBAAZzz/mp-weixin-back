@@ -6,8 +6,8 @@ const JSON5 = require('json5');
 const kolorist = require('kolorist');
 const compilerSfc = require('@vue/compiler-sfc');
 const generate = require('@babel/generator');
-const astKit = require('ast-kit');
 const MagicString = require('magic-string');
+const astKit = require('ast-kit');
 
 function _interopDefaultCompat (e) { return e && typeof e === 'object' && 'default' in e ? e.default : e; }
 
@@ -280,8 +280,6 @@ function optionsWalk(context, code, sfc, id) {
   };
   if (methodsNode) {
     methodsNode.properties.push(newMethodsProperty);
-    const code2 = (generate__default.default ? generate__default.default : generate__default)(methodsNode);
-    console.log(code2);
   } else if (exportDefaultNode) {
     const addMethods = {
       type: "ObjectProperty",

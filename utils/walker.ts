@@ -63,7 +63,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
           if (backArguments?.type === 'ObjectExpression') {
             const config = new Function(
               // @ts-ignore
-              `return (${(generate.default ? generate.default : generate)(backArguments).code});`,
+              `return (${(generate.default ? generate.default : generate)(backArguments).code});`
             )()
             Object.assign(pageInfo.backConfig, config)
           }
@@ -77,7 +77,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
               pageInfo.callbackCode += body.body
                 .map(
                   // @ts-ignore
-                  (statement) => (generate.default ? generate.default : generate)(statement).code,
+                  (statement) => (generate.default ? generate.default : generate)(statement).code
                 )
                 .join('')
             }
@@ -149,7 +149,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
     ` ${importRefFromVue}
       ${stateFrequency}
       ${statePageContainerVar}
-      ${stateBeforeLeave} `,
+      ${stateBeforeLeave} `
   )
   codeMs.overwrite(scriptOffsets.start, scriptOffsets.end, scriptMagicString.toString())
 
@@ -251,7 +251,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
   ] as ObjectProperty[]
   if (dataMethodNode) {
     const returnStatement = (dataMethodNode as BlockStatement).body.find(
-      (node) => node.type === 'ReturnStatement',
+      (node) => node.type === 'ReturnStatement'
     )
     if (
       returnStatement &&
@@ -284,7 +284,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
         ],
       },
     }
-    ;(exportDefaultNode as ObjectExpression).properties.push(addData)
+      ; (exportDefaultNode as ObjectExpression).properties.push(addData)
   }
 
   // 获取传入插件的统一方法
@@ -314,7 +314,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
   `
   const stateBeforeLeaveAst = babelParse(stateBeforeLeave)
   const stateBeforeLeaveNode = stateBeforeLeaveAst.body.find(
-    (node) => node.type === 'FunctionDeclaration',
+    (node) => node.type === 'FunctionDeclaration'
   )
   const newMethodsProperty = {
     type: 'ObjectMethod',
@@ -340,10 +340,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
     },
   } as ObjectMethod
   if (methodsNode) {
-    ;(methodsNode as ObjectExpression).properties.push(newMethodsProperty)
-    // @ts-ignore
-    const code = (generate.default ? generate.default : generate)(methodsNode)
-    console.log(code)
+    ; (methodsNode as ObjectExpression).properties.push(newMethodsProperty)
   } else if (exportDefaultNode) {
     const addMethods: ObjectProperty = {
       type: 'ObjectProperty',
@@ -358,7 +355,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
         properties: [newMethodsProperty],
       },
     }
-    ;(exportDefaultNode as ObjectExpression).properties.push(addMethods)
+      ; (exportDefaultNode as ObjectExpression).properties.push(addMethods)
   }
 
   const { template, script } = sfc
