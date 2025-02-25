@@ -444,7 +444,10 @@ function MpBackPlugin(userOptions = {}) {
       if (id.includes("node_modules") || !id.includes(".vue")) {
         return;
       }
-      return context.transform(code, id);
+      return {
+        code: await context.transform(code, id),
+        map: null
+      };
     }
   };
 }
