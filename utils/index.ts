@@ -1,7 +1,6 @@
 import { parse } from '@vue/compiler-sfc'
 import { pageContext } from '../src/context'
 import { vueWalker } from './walker'
-import type { SFCDescriptor } from '@vue/compiler-sfc'
 
 export async function transformVueFile(this: pageContext, code: string, id: string) {
   try {
