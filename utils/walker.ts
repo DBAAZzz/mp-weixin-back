@@ -30,16 +30,40 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
     hasImportRef: false,
     backConfig: { ...context.config },
     callbackCode: '',
+    activeFnName: 'activeMpBack',
+    inActiveFnName: 'inactiveMpBack',
   }
+
+  const activeFnCallsToModify: any[] = []
+  const inActiveFnCallsToModify: any[] = []
 
   if (setupAst) {
     walkAST<Node>(setupAst, {
       enter(node) {
         if (node.type === 'ImportDeclaration') {
           if (node.source.value.includes(virtualFileId)) {
-            const importSpecifier = node.specifiers[0]
+            const importDefaultSpecifiers = node.specifiers.filter(
+              (i) => i.type === 'ImportDefaultSpecifier',
+            )
+            const importDefaultSpecifier = importDefaultSpecifiers[0]
             pageInfo.hasPageBack = true
-            pageInfo.pageBackFnName = importSpecifier.local.name
+            pageInfo.pageBackFnName = importDefaultSpecifier.local.name
+
+            const importSpecifiers = node.specifiers.filter((i) => i.type === 'ImportSpecifier')
+            importSpecifiers.map((specifiers) => {
+              if (
+                specifiers.imported.type === 'Identifier' &&
+                specifiers.imported.name === 'activeMpBack'
+              ) {
+                pageInfo.activeFnName = specifiers.local.name
+              }
+              if (
+                specifiers.imported.type === 'Identifier' &&
+                specifiers.imported.name === 'inactiveMpBack'
+              ) {
+                pageInfo.inActiveFnName = specifiers.local.name
+              }
+            })
           }
           if (node.source.value === 'vue') {
             node.specifiers.some((specifier) => {
@@ -63,7 +87,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
           if (backArguments?.type === 'ObjectExpression') {
             const config = new Function(
               // @ts-ignore
-              `return (${(generate.default ? generate.default : generate)(backArguments).code});`
+              `return (${(generate.default ? generate.default : generate)(backArguments).code});`,
             )()
             Object.assign(pageInfo.backConfig, config)
           }
@@ -77,11 +101,43 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
               pageInfo.callbackCode += body.body
                 .map(
                   // @ts-ignore
-                  (statement) => (generate.default ? generate.default : generate)(statement).code
+                  (statement) => (generate.default ? generate.default : generate)(statement).code,
                 )
                 .join('')
             }
           }
+        }
+
+        if (
+          node.type === 'ExpressionStatement' &&
+          node.expression.type === 'CallExpression' &&
+          node.expression.callee.loc?.identifierName === pageInfo.activeFnName
+        ) {
+          activeFnCallsToModify.push({
+            start: node.expression.start,
+            end: node.expression.end,
+            original: sfc.scriptSetup!.loc.source.substring(
+              node.expression.start,
+              node.expression.end,
+            ),
+            name: pageInfo.activeFnName,
+          })
+        }
+
+        if (
+          node.type === 'ExpressionStatement' &&
+          node.expression.type === 'CallExpression' &&
+          node.expression.callee.loc?.identifierName === pageInfo.inActiveFnName
+        ) {
+          inActiveFnCallsToModify.push({
+            start: node.expression.start,
+            end: node.expression.end,
+            original: sfc.scriptSetup!.loc.source.substring(
+              node.expression.start,
+              node.expression.end,
+            ),
+            name: pageInfo.inActiveFnName,
+          })
         }
       },
     })
@@ -99,9 +155,14 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
     pageInfo.callbackCode += 'uni.navigateBack({ delta: 1 });'
   }
 
+  const importUseMpWeixinBack = `import { useMpWeixinBack } from '${virtualFileId}'`
   const importRefFromVue = !pageInfo.hasImportRef ? `import { ref } from 'vue'` : ''
   const stateFrequency = 'let __MP_BACK_FREQUENCY__ = 1;'
-  const statePageContainerVar = 'const __MP_BACK_SHOW_PAGE_CONTAINER__ = ref(true);'
+
+  const statePageContainerVar = `
+    const { __MP_BACK_SHOW_PAGE_CONTAINER__, __MP_WEIXIN_ACTIVEBACK__, __MP_WEIXIN_INACTIVEBACK__ } = useMpWeixinBack(${pageInfo.backConfig.initialValue})
+  `
+
   // 获取传入插件的统一方法
   const configBack = (() => {
     const onPageBack = pageInfo.backConfig.onPageBack
@@ -115,6 +176,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
     }
     return `(function ${onPageBack})()`
   })()
+
   const stateBeforeLeave = `
     const onBeforeLeave = () => {
       if (__MP_BACK_FREQUENCY__ < ${pageInfo.backConfig.frequency}) {
@@ -147,10 +209,43 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
   const scriptMagicString = new MagicString(scriptOffsets.content)
   scriptMagicString.prepend(
     ` ${importRefFromVue}
+      ${importUseMpWeixinBack}
       ${stateFrequency}
       ${statePageContainerVar}
-      ${stateBeforeLeave} `
+      ${stateBeforeLeave} `,
   )
+
+  // 应用 activeMpBack 调用的修改
+  activeFnCallsToModify.forEach((call) => {
+    // 使用正则匹配函数调用结构，确保我们只修改括号内的内容
+    const fnCallRegex = new RegExp(`${call.name}\\(([^)]*)\\)`, 'g')
+    const newCall = call.original.replace(fnCallRegex, (_match: any, args: string) => {
+      // 如果原调用没有参数
+      if (!args.trim()) {
+        return `${call.name}(__MP_WEIXIN_ACTIVEBACK__)`
+      }
+      // 如果有参数，添加新参数
+      return `${call.name}(__MP_WEIXIN_ACTIVEBACK__, ${args})`
+    })
+
+    scriptMagicString.overwrite(call.start, call.end, newCall)
+  })
+
+  inActiveFnCallsToModify.forEach((call) => {
+    // 使用正则匹配函数调用结构，确保我们只修改括号内的内容
+    const fnCallRegex = new RegExp(`${call.name}\\(([^)]*)\\)`, 'g')
+    const newCall = call.original.replace(fnCallRegex, (_match: any, args: string) => {
+      // 如果原调用没有参数
+      if (!args.trim()) {
+        return `${call.name}(__MP_WEIXIN_INACTIVEBACK__)`
+      }
+      // 如果有参数，添加新参数
+      return `${call.name}(__MP_WEIXIN_INACTIVEBACK__, ${args})`
+    })
+
+    scriptMagicString.overwrite(call.start, call.end, newCall)
+  })
+
   codeMs.overwrite(scriptOffsets.start, scriptOffsets.end, scriptMagicString.toString())
 
   return codeMs.toString()
@@ -251,7 +346,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
   ] as ObjectProperty[]
   if (dataMethodNode) {
     const returnStatement = (dataMethodNode as BlockStatement).body.find(
-      (node) => node.type === 'ReturnStatement'
+      (node) => node.type === 'ReturnStatement',
     )
     if (
       returnStatement &&
@@ -284,7 +379,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
         ],
       },
     }
-      ; (exportDefaultNode as ObjectExpression).properties.push(addData)
+    ;(exportDefaultNode as ObjectExpression).properties.push(addData)
   }
 
   // 获取传入插件的统一方法
@@ -314,7 +409,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
   `
   const stateBeforeLeaveAst = babelParse(stateBeforeLeave)
   const stateBeforeLeaveNode = stateBeforeLeaveAst.body.find(
-    (node) => node.type === 'FunctionDeclaration'
+    (node) => node.type === 'FunctionDeclaration',
   )
   const newMethodsProperty = {
     type: 'ObjectMethod',
@@ -340,7 +435,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
     },
   } as ObjectMethod
   if (methodsNode) {
-    ; (methodsNode as ObjectExpression).properties.push(newMethodsProperty)
+    ;(methodsNode as ObjectExpression).properties.push(newMethodsProperty)
   } else if (exportDefaultNode) {
     const addMethods: ObjectProperty = {
       type: 'ObjectProperty',
@@ -355,7 +450,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
         properties: [newMethodsProperty],
       },
     }
-      ; (exportDefaultNode as ObjectExpression).properties.push(addMethods)
+    ;(exportDefaultNode as ObjectExpression).properties.push(addMethods)
   }
 
   const { template, script } = sfc
