@@ -43,7 +43,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
         if (node.type === 'ImportDeclaration') {
           if (node.source.value.includes(virtualFileId)) {
             const importDefaultSpecifiers = node.specifiers.filter(
-              (i) => i.type === 'ImportDefaultSpecifier',
+              (i) => i.type === 'ImportDefaultSpecifier'
             )
             const importDefaultSpecifier = importDefaultSpecifiers[0]
             pageInfo.hasPageBack = true
@@ -87,7 +87,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
           if (backArguments?.type === 'ObjectExpression') {
             const config = new Function(
               // @ts-ignore
-              `return (${(generate.default ? generate.default : generate)(backArguments).code});`,
+              `return (${(generate.default ? generate.default : generate)(backArguments).code});`
             )()
             Object.assign(pageInfo.backConfig, config)
           }
@@ -101,7 +101,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
               pageInfo.callbackCode += body.body
                 .map(
                   // @ts-ignore
-                  (statement) => (generate.default ? generate.default : generate)(statement).code,
+                  (statement) => (generate.default ? generate.default : generate)(statement).code
                 )
                 .join('')
             }
@@ -118,7 +118,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
             end: node.expression.end,
             original: sfc.scriptSetup!.loc.source.substring(
               node.expression.start,
-              node.expression.end,
+              node.expression.end
             ),
             name: pageInfo.activeFnName,
           })
@@ -134,7 +134,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
             end: node.expression.end,
             original: sfc.scriptSetup!.loc.source.substring(
               node.expression.start,
-              node.expression.end,
+              node.expression.end
             ),
             name: pageInfo.inActiveFnName,
           })
@@ -179,6 +179,9 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
 
   const stateBeforeLeave = `
     const onBeforeLeave = () => {
+      if (!__MP_BACK_SHOW_PAGE_CONTAINER__.value) {
+        return
+      }
       if (__MP_BACK_FREQUENCY__ < ${pageInfo.backConfig.frequency}) {
         __MP_BACK_SHOW_PAGE_CONTAINER__.value = false
         setTimeout(() => __MP_BACK_SHOW_PAGE_CONTAINER__.value = true, 0);
@@ -212,7 +215,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
       ${importUseMpWeixinBack}
       ${stateFrequency}
       ${statePageContainerVar}
-      ${stateBeforeLeave} `,
+      ${stateBeforeLeave} `
   )
 
   // 应用 activeMpBack 调用的修改
@@ -346,7 +349,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
   ] as ObjectProperty[]
   if (dataMethodNode) {
     const returnStatement = (dataMethodNode as BlockStatement).body.find(
-      (node) => node.type === 'ReturnStatement',
+      (node) => node.type === 'ReturnStatement'
     )
     if (
       returnStatement &&
@@ -409,7 +412,7 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
   `
   const stateBeforeLeaveAst = babelParse(stateBeforeLeave)
   const stateBeforeLeaveNode = stateBeforeLeaveAst.body.find(
-    (node) => node.type === 'FunctionDeclaration',
+    (node) => node.type === 'FunctionDeclaration'
   )
   const newMethodsProperty = {
     type: 'ObjectMethod',

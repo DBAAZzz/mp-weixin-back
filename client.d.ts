@@ -14,10 +14,19 @@ declare module 'mp-weixin-back-helper' {
     frequency: number
   }
 
-  function onPageBack(
-    callback:() => void,
-    params: Partial<Config>
-  )
+  function onPageBack(callback: () => void, params?: Partial<Config>)
+
+  /**
+   * 开启监听手势滑动事件
+   */
+  function activeMpBack()
+
+  /**
+   * 禁用监听手势滑动事件
+   */
+  function inactiveMpBack()
 
   export default onPageBack
+
+  export { activeMpBack, inactiveMpBack }
 }
