@@ -7,6 +7,7 @@ function MpBackPlugin(userOptions: UserOptions = {}): Plugin {
   let context: pageContext
 
   const defaultOptions: Config = {
+    initialValue: true,
     preventDefault: false,
     frequency: 1,
     debug: false,
@@ -33,7 +34,33 @@ function MpBackPlugin(userOptions: UserOptions = {}): Plugin {
       }
       // 导出一个对象
       if (id === virtualFileId) {
-        return `export default function onPageBack() {}`
+        return `
+          import { ref } from 'vue'
+          export default function onPageBack() {}
+          export function activeMpBack(fn = null) {
+            fn?.()
+          }
+          export function inactiveMpBack(fn = null) {
+            fn?.()
+          }
+          export function useMpWeixinBack(initialValue = true) {
+            const __MP_BACK_SHOW_PAGE_CONTAINER__ = ref(initialValue)
+
+            const __MP_WEIXIN_ACTIVEBACK__ = () => {
+              __MP_BACK_SHOW_PAGE_CONTAINER__.value = true
+            }
+
+            const __MP_WEIXIN_INACTIVEBACK__ = () => {
+              __MP_BACK_SHOW_PAGE_CONTAINER__.value = false
+            }
+
+            return {
+              __MP_BACK_SHOW_PAGE_CONTAINER__,
+              __MP_WEIXIN_ACTIVEBACK__,
+              __MP_WEIXIN_INACTIVEBACK__
+            }
+          }
+        `
       }
     },
     async transform(code, id) {
