@@ -23,7 +23,8 @@ function compositionWalk(context, code, sfc, id) {
     pageBackFnName: "onPageBack",
     hasImportRef: false,
     backConfig: { ...context.config },
-    callbackCode: "",
+    onPageBackBodyAst: [],
+    onPageBackCallNodeToRemove: null,
     activeFnName: "activeMpBack",
     inActiveFnName: "inactiveMpBack"
   };
@@ -61,6 +62,7 @@ function compositionWalk(context, code, sfc, id) {
           }
         }
         if (node.type === "ExpressionStatement" && node.expression.type === "CallExpression" && node.expression.callee.loc?.identifierName === pageInfo.pageBackFnName) {
+          pageInfo.onPageBackCallNodeToRemove = node;
           const callback = node.expression.arguments[0];
           const backArguments = node.expression.arguments[1];
           if (backArguments?.type === "ObjectExpression") {
@@ -71,14 +73,9 @@ function compositionWalk(context, code, sfc, id) {
             Object.assign(pageInfo.backConfig, config);
           }
           if (callback && (callback.type === "ArrowFunctionExpression" || callback.type === "FunctionExpression")) {
-            const body = callback.body;
-            if (body.type === "BlockStatement") {
-              pageInfo.callbackCode += body.body.map(
-                // @ts-ignore
-                (statement) => (generate.default ? generate.default : generate)(statement).code
-              ).join("");
-            }
+            pageInfo.onPageBackBodyAst = callback.body.body;
           }
+          return;
         }
         if (node.type === "ExpressionStatement" && node.expression.type === "CallExpression" && node.expression.callee.loc?.identifierName === pageInfo.activeFnName) {
           activeFnCallsToModify.push({
@@ -107,12 +104,39 @@ function compositionWalk(context, code, sfc, id) {
   }
   if (!pageInfo.hasPageBack)
     return code;
+  if (pageInfo.onPageBackCallNodeToRemove) {
+    const scriptSetupOffset = sfc.scriptSetup.loc.start.offset;
+    const nodeToRemove = pageInfo.onPageBackCallNodeToRemove;
+    const globalStart = scriptSetupOffset + nodeToRemove.start;
+    const globalEnd = scriptSetupOffset + nodeToRemove.end;
+    codeMs.remove(globalStart, globalEnd);
+  }
+  let callbackCode = "";
+  if (pageInfo.onPageBackBodyAst.length > 0) {
+    const tempAstRoot = {
+      type: "BlockStatement",
+      body: pageInfo.onPageBackBodyAst
+    };
+    walkAST(tempAstRoot, {
+      enter(node) {
+        if (node.type === "CallExpression" && node.callee.type === "Identifier") {
+          const createIdentifier = (name) => ({ type: "Identifier", name });
+          if (node.callee.name === pageInfo.activeFnName) {
+            node.arguments.unshift(createIdentifier("__MP_WEIXIN_ACTIVEBACK__"));
+          } else if (node.callee.name === pageInfo.inActiveFnName) {
+            node.arguments.unshift(createIdentifier("__MP_WEIXIN_INACTIVEBACK__"));
+          }
+        }
+      }
+    });
+    callbackCode = pageInfo.onPageBackBodyAst.map((statement) => (generate.default ? generate.default : generate)(statement).code).join("\n");
+  }
   if (code.includes("<page-container")) {
     context.log.debugLog(`${context.getPageById(id)}\u9875\u9762\u5DF2\u6709page-container\u7EC4\u4EF6\uFF0C\u6CE8\u5165\u5931\u8D25`);
     return code;
   }
   if (!pageInfo.backConfig.preventDefault) {
-    pageInfo.callbackCode += "uni.navigateBack({ delta: 1 });";
+    callbackCode += "uni.navigateBack({ delta: 1 });";
   }
   const importUseMpWeixinBack = `import { useMpWeixinBack } from '${virtualFileId}'`;
   const importRefFromVue = !pageInfo.hasImportRef ? `import { ref } from 'vue'` : "";
@@ -144,7 +168,7 @@ function compositionWalk(context, code, sfc, id) {
         __MP_BACK_FREQUENCY__++
       }
       ${configBack}
-      ${pageInfo.callbackCode}
+      ${callbackCode}
     };
   `;
   const { template, scriptSetup } = sfc;
