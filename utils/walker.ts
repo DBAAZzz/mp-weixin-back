@@ -4,7 +4,9 @@ import { babelParse, walkAST } from 'ast-kit'
 import { pageContext } from '../src/context'
 import { virtualFileId } from './constant'
 import type {
+  WithStatement,
   BlockStatement,
+  Statement,
   FunctionExpression,
   Node,
   ObjectExpression,
@@ -29,7 +31,8 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
     pageBackFnName: 'onPageBack',
     hasImportRef: false,
     backConfig: { ...context.config },
-    callbackCode: '',
+    onPageBackBodyAst: [] as Statement[],
+    onPageBackCallNodeToRemove: null as Node | null,
     activeFnName: 'activeMpBack',
     inActiveFnName: 'inactiveMpBack',
   }
@@ -81,6 +84,8 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
           node.expression.type === 'CallExpression' &&
           node.expression.callee.loc?.identifierName === pageInfo.pageBackFnName
         ) {
+          // 记录下整个 onPageBack(...) 语句节点，以便后续移除
+          pageInfo.onPageBackCallNodeToRemove = node
           const callback = node.expression.arguments[0]
           const backArguments = node.expression.arguments[1]
 
@@ -96,16 +101,11 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
             callback &&
             (callback.type === 'ArrowFunctionExpression' || callback.type === 'FunctionExpression')
           ) {
-            const body = callback.body
-            if (body.type === 'BlockStatement') {
-              pageInfo.callbackCode += body.body
-                .map(
-                  // @ts-ignore
-                  (statement) => (generate.default ? generate.default : generate)(statement).code
-                )
-                .join('')
-            }
+            pageInfo.onPageBackBodyAst = callback.body.body
           }
+
+          // 跳过此节点的子节点遍历，因为我们将手动处理其内部逻辑
+          return
         }
 
         if (
@@ -146,13 +146,49 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
   // 没有引入mp-weixin-back-helper
   if (!pageInfo.hasPageBack) return code
 
+  if (pageInfo.onPageBackCallNodeToRemove) {
+    const scriptSetupOffset = sfc.scriptSetup!.loc.start.offset
+    const nodeToRemove = pageInfo.onPageBackCallNodeToRemove as any
+    const globalStart = scriptSetupOffset + nodeToRemove.start
+    const globalEnd = scriptSetupOffset + nodeToRemove.end
+    codeMs.remove(globalStart, globalEnd)
+  }
+
+  let callbackCode = ''
+  if (pageInfo.onPageBackBodyAst.length > 0) {
+    // 包装成一个临时的 AST 根节点以供遍历
+    const tempAstRoot = {
+      type: 'BlockStatement',
+      body: pageInfo.onPageBackBodyAst,
+    } as WithStatement
+
+    walkAST(tempAstRoot, {
+      enter(node: any) {
+        if (node.type === 'CallExpression' && node.callee.type === 'Identifier') {
+          const createIdentifier = (name: string) => ({ type: 'Identifier', name })
+
+          if (node.callee.name === pageInfo.activeFnName) {
+            node.arguments.unshift(createIdentifier('__MP_WEIXIN_ACTIVEBACK__'))
+          } else if (node.callee.name === pageInfo.inActiveFnName) {
+            node.arguments.unshift(createIdentifier('__MP_WEIXIN_INACTIVEBACK__'))
+          }
+        }
+      },
+    })
+
+    callbackCode = pageInfo.onPageBackBodyAst
+      // @ts-ignore
+      .map((statement) => (generate.default ? generate.default : generate)(statement).code)
+      .join('\n')
+  }
+
   if (code.includes('<page-container')) {
     context.log.debugLog(`${context.getPageById(id)}页面已有page-container组件，注入失败`)
     return code
   }
 
   if (!pageInfo.backConfig.preventDefault) {
-    pageInfo.callbackCode += 'uni.navigateBack({ delta: 1 });'
+    callbackCode += 'uni.navigateBack({ delta: 1 });'
   }
 
   const importUseMpWeixinBack = `import { useMpWeixinBack } from '${virtualFileId}'`
@@ -188,7 +224,7 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
         __MP_BACK_FREQUENCY__++
       }
       ${configBack}
-      ${pageInfo.callbackCode}
+      ${callbackCode}
     };
   `
   const { template, scriptSetup } = sfc
