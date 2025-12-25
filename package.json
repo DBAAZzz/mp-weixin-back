@@ -1,7 +1,7 @@
 {
   "name": "mp-weixin-back",
   "type": "module",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "监听微信小程序的手势返回和页面默认导航栏的返回",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
