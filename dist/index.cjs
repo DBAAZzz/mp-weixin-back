@@ -4,11 +4,12 @@ const path = require('path');
 const fs = require('fs');
 const JSON5 = require('json5');
 const kolorist = require('kolorist');
-const compilerSfc = require('@vue/compiler-sfc');
+const module$1 = require('module');
 const generate = require('@babel/generator');
 const MagicString = require('magic-string');
 const astKit = require('ast-kit');
 
+var _documentCurrentScript = typeof document !== 'undefined' ? document.currentScript : null;
 function _interopDefaultCompat (e) { return e && typeof e === 'object' && 'default' in e ? e.default : e; }
 
 const path__default = /*#__PURE__*/_interopDefaultCompat(path);
@@ -407,9 +408,35 @@ const vueWalker = {
   optionsWalk
 };
 
+let compilerPromise = null;
+async function resolveCompiler(root) {
+  if (compilerPromise) {
+    return compilerPromise;
+  }
+  compilerPromise = (async () => {
+    try {
+      const _require = module$1.createRequire((typeof document === 'undefined' ? require('u' + 'rl').pathToFileURL(__filename).href : (_documentCurrentScript && _documentCurrentScript.tagName.toUpperCase() === 'SCRIPT' && _documentCurrentScript.src || new URL('index.cjs', document.baseURI).href)));
+      const compilerPath = _require.resolve("@vue/compiler-sfc", { paths: [root] });
+      return _require(compilerPath);
+    } catch (firstError) {
+      try {
+        return await import('@vue/compiler-sfc');
+      } catch (secondError) {
+        throw new Error(
+          `\u65E0\u6CD5\u89E3\u6790 @vue/compiler-sfc\u3002
+\u6B64\u63D2\u4EF6\u9700\u8981\u9879\u76EE\u4E2D\u5B89\u88C5 @vue/compiler-sfc\u3002
+\u8BF7\u624B\u52A8\u5B89\u88C5\uFF1Apnpm add -D @vue/compiler-sfc
+`
+        );
+      }
+    }
+  })();
+  return compilerPromise;
+}
 async function transformVueFile(code, id) {
   try {
-    const sfc = compilerSfc.parse(code).descriptor;
+    const sfcCompiler = await resolveCompiler(this.config.root);
+    const sfc = sfcCompiler.parse(code).descriptor;
     const { template, script, scriptSetup } = sfc;
     if (!template?.content) {
       return code;
@@ -421,7 +448,7 @@ async function transformVueFile(code, id) {
     return vueWalker[walker](this, code, sfc, id);
   } catch (error) {
     this.log.error("\u89E3\u6790vue\u6587\u4EF6\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u6587\u4EF6\u662F\u5426\u6B63\u786E");
-    this.log.debugLog(String(error));
+    this.log.error(String(error));
     return code;
   }
 }
