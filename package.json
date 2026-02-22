@@ -1,7 +1,7 @@
 {
   "name": "mp-weixin-back",
   "type": "module",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "Vite plugin to intercept back navigation (gesture back & navbar back) in WeChat miniprogram (mp-weixin) built with uni-app + Vue 3. 监听微信小程序的手势返回和页面默认导航栏的返回",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
