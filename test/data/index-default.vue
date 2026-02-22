@@ -8,7 +8,7 @@ export default {
     return {}
   },
   onPageBack() {
-    console.log('触发了手势返回')
+    console.log('触发了手势返回！')
     return true
   },
 }
