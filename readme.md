@@ -1,5 +1,30 @@
 # mp-weixin-back
 
+Vite plugin to intercept back navigation (gesture back + navbar back button) in WeChat miniprogram (mp-weixin) built with uni-app + Vue 3.
+
+## TL;DR
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite'
+import mpBackPlugin from 'mp-weixin-back'
+
+export default defineConfig({
+  plugins: [mpBackPlugin()],
+})
+```
+
+```ts
+// Any page .vue file — inside <script setup>
+import onPageBack from 'mp-weixin-back-helper'
+
+onPageBack(() => {
+  // handle back: show dialog, log analytics, etc.
+})
+```
+
+---
+
 ## 功能概述
 
 `mp-weixin-back` 是一个专门用于监听微信小程序`手势返回`、`导航栏返回事件`、`navigateBack`的工具库，提供灵活的配置选项和简洁的 API。
@@ -9,7 +34,7 @@
 ```bash
 npm install mp-weixin-back
 # 或
-yarn add mp-weixin-back
+pnpm add mp-weixin-back
 ```
 
 ## ⚙️ Vite 配置
@@ -27,9 +52,9 @@ export default defineConfig({
       preventDefault: false, // 是否阻止默认返回行为，设置成 true 则不会返回上一层
       frequency: 1, // 阻止次数，需要一直拦截则设置一个很大的值即可，如：9999
       debug: false, // 调试模式，默认为 false
-      onPageBack: () => {
-        console.log('返回事件触发')
-      }, // 统一钩子，事件触发时执行
+      onPageBack: ({ page }) => {
+        console.log('返回事件触发，当前页面：', page)
+      }, // 全局钩子，任意页面触发时执行
     }),
   ],
 })
@@ -68,24 +93,45 @@ onPageBack(
 )
 ```
 
+### 显示确认弹窗（常见场景）
+
+```ts
+<script setup>
+import onPageBack from 'mp-weixin-back-helper'
+
+onPageBack(
+  () => {
+    uni.showModal({
+      title: '提示',
+      content: '确定要离开当前页面吗？',
+      success: (res) => {
+        if (res.confirm) uni.navigateBack()
+      },
+    })
+  },
+  { preventDefault: true }
+)
+</script>
+```
+
 ## 📚 API 文档
 
-### `onPageBack(callback, config?)`
+### `onPageBack(callback, options?)`
 
-监听页面返回事件
+监听页面返回事件，必须在 `<script setup>` 顶层调用。
 
-| 参数     | 类型         | 必填 | 说明                     |
-| -------- | ------------ | ---- | ------------------------ |
-| callback | `() => void` | 是   | 返回事件触发时的回调函数 |
-| options  | Object       | 否   | 监听器配置选项           |
+| 参数       | 类型                | 必填 | 说明                     |
+| ---------- | ------------------- | ---- | ------------------------ |
+| `callback` | `() => void`        | 是   | 返回事件触发时的回调函数 |
+| `options`  | `OnPageBackOptions` | 否   | 监听器配置选项           |
 
-#### 配置选项
+#### 配置选项 `OnPageBackOptions`
 
-| 参数           | 类型    | 默认值 | 说明                                            |
-| -------------- | ------- | ------ | ----------------------------------------------- |
-| preventDefault | boolean | false  | 是否阻止默认返回行为（true 时页面不会实际返回） |
-| frequency      | number  | 1      | 阻止次数                                        |
-| initialValue   | boolean | true   | 是否立即启用监听（设为 false 时需手动激活）     |
+| 参数             | 类型      | 默认值  | 说明                                                            |
+| ---------------- | --------- | ------- | --------------------------------------------------------------- |
+| `preventDefault` | `boolean` | `false` | 是否阻止默认返回行为（`true` 时页面不会实际返回）               |
+| `frequency`      | `number`  | `1`     | 阻止次数                                                        |
+| `initialValue`   | `boolean` | `true`  | 是否立即启用监听（设为 `false` 时需手动调用 `activeMpBack()`）  |
 
 ### 辅助方法
 
@@ -103,19 +149,26 @@ onPageBack(
 <template>
   <div>
     <!-- 页面代码 -->
-    <button @click="toggleListener(true)">开启</button>
-    <button @click="toggleListener(false)">禁用</button>
+    <button @click="activeMpBack()">开启</button>
+    <button @click="inactiveMpBack()">禁用</button>
   </div>
 </template>
 
 <script setup>
   import onPageBack, { activeMpBack, inactiveMpBack } from 'mp-weixin-back-helper'
 
-  const toggleListener = (enable) => {
-    enable ? activeMpBack() : inactiveMpBack()
-  }
+  onPageBack(() => { /* 处理返回 */ }, { initialValue: false })
 </script>
 ```
+
+### 插件全局配置 `mpBackPlugin(options)`
+
+| 参数             | 类型                                        | 默认值  | 说明                       |
+| ---------------- | ------------------------------------------- | ------- | -------------------------- |
+| `preventDefault` | `boolean`                                   | `false` | 全局阻止默认返回行为       |
+| `frequency`      | `number`                                    | `1`     | 全局阻止次数               |
+| `debug`          | `boolean`                                   | `false` | 开发模式下开启调试日志     |
+| `onPageBack`     | `(params: { page: string }) => void`        | —       | 全局回调，任意页面触发执行 |
 
 ## 🎯 选项式 API 支持（未完善）
 
@@ -171,3 +224,10 @@ onPageBack(
 ### Q2: 全局配置与页面配置的优先级？
 
 页面级配置会覆盖全局配置，建议将通用配置放在全局，特殊需求在页面单独设置。
+
+### Q3: 不生效怎么排查？
+
+1. 确认 `src/pages.json` 存在且格式正确
+2. 确认是页面级 `.vue` 文件（非组件）
+3. 开启 `debug: true` 查看插件日志
+4. 确认 `@vue/compiler-sfc` 已安装：`pnpm add -D @vue/compiler-sfc`

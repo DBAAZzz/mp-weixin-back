@@ -23,9 +23,10 @@ async function resolveCompiler(root: string): Promise<typeof import('@vue/compil
         return await import('@vue/compiler-sfc')
       } catch (secondError) {
         throw new Error(
-          `无法解析 @vue/compiler-sfc。\n` +
-            `此插件需要项目中安装 @vue/compiler-sfc。\n` +
-            `请手动安装：pnpm add -D @vue/compiler-sfc\n`
+          `[mp-weixin-back] Cannot resolve @vue/compiler-sfc.\n` +
+            `This plugin requires @vue/compiler-sfc to be installed in your project.\n` +
+            `Fix: pnpm add -D @vue/compiler-sfc\n` +
+            `Docs: https://github.com/DBAAZzz/mp-weixin-back#%EF%B8%8F-vite-配置\n`
         )
       }
     }
@@ -51,7 +52,10 @@ export async function transformVueFile(this: pageContext, code: string, id: stri
     const walker = scriptSetup ? 'compositionWalk' : 'optionsWalk'
     return vueWalker[walker](this, code, sfc, id)
   } catch (error) {
-    this.log.error('解析vue文件失败，请检查文件是否正确')
+    this.log.error(
+      `Failed to transform ${id}. Please check the file is a valid Vue SFC.\n` +
+        `  Docs: https://github.com/DBAAZzz/mp-weixin-back#-快速开始`
+    )
     this.log.error(String(error))
     return code
   }

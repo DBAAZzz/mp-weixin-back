@@ -57,7 +57,11 @@ export class pageContext {
         }
       }
     } catch (error: unknown) {
-      this.log.error('读取pages.json文件失败')
+      this.log.error(
+        `Failed to read pages.json. Make sure src/pages.json exists and is valid JSON/JSON5.\n` +
+          `  Path checked: ${this.getPagesJsonPath()}\n` +
+          `  Docs: https://github.com/DBAAZzz/mp-weixin-back#%EF%B8%8F-vite-配置`
+      )
       this.log.debugLog(String(error))
     }
   }
