@@ -1,0 +1,154 @@
+# mp-weixin-back
+
+> Vite plugin for intercepting back navigation (gesture back + navbar back button) in WeChat miniprogram (mp-weixin) built with uni-app + Vue 3.
+
+## When to use
+
+Use this library when you need to:
+- Intercept or customize the swipe-back gesture in a WeChat miniprogram page
+- Intercept or customize the navbar back button behavior
+- Show a confirmation dialog before the user leaves a page
+- Prevent accidental back navigation (e.g., on a form page)
+
+## Install
+
+```bash
+npm install mp-weixin-back
+# or
+pnpm add mp-weixin-back
+```
+
+## Setup (vite.config.ts)
+
+Register the Vite plugin once, globally:
+
+```ts
+import { defineConfig } from 'vite'
+import mpBackPlugin from 'mp-weixin-back'
+
+export default defineConfig({
+  plugins: [
+    mpBackPlugin({
+      preventDefault: false, // true = block all back navigation by default
+      frequency: 1,          // how many times to intercept before allowing through
+      debug: false,          // enable debug logging in development
+      onPageBack: ({ page }) => {
+        console.log('back triggered on page:', page)
+      },
+    }),
+  ],
+})
+```
+
+## Usage in Vue SFC (Composition API)
+
+Import from the virtual module `mp-weixin-back-helper`:
+
+```ts
+// Basic usage — listen to back event
+import onPageBack from 'mp-weixin-back-helper'
+
+onPageBack(() => {
+  console.log('back navigation detected')
+})
+```
+
+```ts
+// Advanced — prevent back and show dialog
+import onPageBack from 'mp-weixin-back-helper'
+
+onPageBack(
+  () => {
+    showConfirmDialog() // your logic here
+  },
+  {
+    preventDefault: true, // block default back behavior
+    frequency: 2,         // intercept 2 times
+    initialValue: true,   // start listening immediately (default)
+  }
+)
+```
+
+```ts
+// Manually toggle the listener
+import onPageBack, { activeMpBack, inactiveMpBack } from 'mp-weixin-back-helper'
+
+onPageBack(() => { /* ... */ }, { initialValue: false }) // start disabled
+
+activeMpBack()   // enable listener (call inside <script setup>)
+inactiveMpBack() // disable listener (call inside <script setup>)
+```
+
+## TypeScript support
+
+Add to `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "types": ["mp-weixin-back/client"]
+  }
+}
+```
+
+Or in `env.d.ts`:
+
+```ts
+/// <reference types="mp-weixin-back/client" />
+```
+
+## API Reference
+
+### Plugin options (`mpBackPlugin(options)`)
+
+| Option          | Type                              | Default | Description                                              |
+| --------------- | --------------------------------- | ------- | -------------------------------------------------------- |
+| `preventDefault`| `boolean`                         | `false` | Block default back behavior globally                     |
+| `frequency`     | `number`                          | `1`     | Number of times to intercept before allowing through     |
+| `debug`         | `boolean`                         | `false` | Log debug info in development mode                       |
+| `onPageBack`    | `(params: { page: string }) => void` | —    | Global callback fired on every back event                |
+
+### `onPageBack(callback, options?)`
+
+Listen to back events on the current page. Must be called in `<script setup>`.
+
+| Param      | Type                  | Required | Description                     |
+| ---------- | --------------------- | -------- | ------------------------------- |
+| `callback` | `() => void`          | Yes      | Function called when back fires |
+| `options`  | `OnPageBackOptions`   | No       | Per-page overrides              |
+
+#### `OnPageBackOptions`
+
+| Option          | Type      | Default | Description                                                  |
+| --------------- | --------- | ------- | ------------------------------------------------------------ |
+| `preventDefault`| `boolean` | `false` | Block default back for this page                             |
+| `frequency`     | `number`  | `1`     | Intercept count for this page                                |
+| `initialValue`  | `boolean` | `true`  | Start listening immediately; set `false` to enable manually  |
+
+### `activeMpBack()`
+
+Enable the back listener. Call inside `<script setup>` when `initialValue: false`.
+
+### `inactiveMpBack()`
+
+Disable the back listener. Call inside `<script setup>`.
+
+## How it works
+
+This is a **Vite transform plugin**. At build time it:
+1. Reads `src/pages.json` to identify miniprogram pages
+2. For each `.vue` page file, injects a `<page-container>` component into the template (the WeChat API used to intercept back gestures)
+3. Wires up the `onPageBack` composable to control `show` state of `<page-container>`
+
+The virtual module `mp-weixin-back-helper` is resolved by the plugin and provides the runtime composable API.
+
+## Constraints
+
+- Requires **uni-app** project with `src/pages.json`
+- Requires **Vue 3** + `<script setup>` (Composition API)
+- Works with **Vite 3–6**
+- Only applies to page-level `.vue` files, not components
+
+## Repository
+
+https://github.com/DBAAZzz/mp-weixin-back
