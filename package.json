@@ -45,6 +45,11 @@
       "types": "./client.d.ts"
     }
   },
+  "files": [
+    "dist",
+    "client.d.ts",
+    "README.md"
+  ],
   "author": "DBAAZzz",
   "license": "ISC",
   "repository": {
