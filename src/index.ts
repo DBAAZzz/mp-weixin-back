@@ -68,10 +68,7 @@ function MpBackPlugin(userOptions: UserOptions = {}): Plugin {
         return
       }
 
-      return {
-        code: await context.transform(code, id),
-        map: null,
-      }
+      return await context.transform(code, id)
     },
   } as Plugin
 }

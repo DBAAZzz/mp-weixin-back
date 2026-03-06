@@ -72,7 +72,6 @@ export class pageContext {
     return this.pages.find((i) => i === path) || null
   }
   async transform(code: string, id: string) {
-    const result = await transformVueFile.call(this, code, id)
-    return result
+    return await transformVueFile.call(this, code, id)
   }
 }
