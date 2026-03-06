@@ -287,7 +287,10 @@ function compositionWalk(context: pageContext, code: string, sfc: any, id: strin
 
   codeMs.overwrite(scriptOffsets.start, scriptOffsets.end, scriptMagicString.toString())
 
-  return codeMs.toString()
+  return {
+    code: codeMs.toString(),
+    map: codeMs.generateMap({ hires: true, source: id, includeContent: true })
+  }
 }
 
 function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
@@ -514,7 +517,10 @@ function optionsWalk(context: pageContext, code: string, sfc: any, id: string) {
   const newScriptContent = (generate.default ? generate.default : generate)(ast).code
   codeMs.overwrite(scriptOffsets.start, scriptOffsets.end, newScriptContent)
 
-  return codeMs.toString()
+  return {
+    code: codeMs.toString(),
+    map: codeMs.generateMap({ hires: true, source: id, includeContent: true })
+  }
 }
 
 export const vueWalker = {

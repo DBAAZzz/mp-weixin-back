@@ -41,11 +41,11 @@ export async function transformVueFile(this: pageContext, code: string, id: stri
     const sfc = sfcCompiler.parse(code).descriptor
     const { template, script, scriptSetup } = sfc
     if (!template?.content) {
-      return code
+      return { code, map: null }
     }
 
     if (!script?.content && !scriptSetup?.content) {
-      return code
+      return { code, map: null }
     }
 
     // 判断页面是否为组合式写法
@@ -57,6 +57,6 @@ export async function transformVueFile(this: pageContext, code: string, id: stri
         `  Docs: https://github.com/DBAAZzz/mp-weixin-back#-快速开始`
     )
     this.log.error(String(error))
-    return code
+    return { code, map: null }
   }
 }
