@@ -62,6 +62,7 @@ export function optionsTransform(
   let onPageBackOption: ObjectMethod | ObjectProperty | null = null
   let dataIndex = -1
   let methodsIndex = -1
+  let onPageBackIndex = -1
   let lastSpreadIndex = -1
 
   for (let index = 0; index < componentObject.properties.length; index++) {
@@ -79,10 +80,22 @@ export function optionsTransform(
       methodsOption = prop
       methodsIndex = index
     }
-    if (name === ON_PAGE_BACK) onPageBackOption = prop
+    if (name === ON_PAGE_BACK) {
+      onPageBackOption = prop
+      onPageBackIndex = index
+    }
   }
 
   if (!onPageBackOption) return
+
+  // onPageBack 之后的对象展开会在运行时覆盖 this.$options.onPageBack：
+  // 构建期从显式键提取的配置与运行时实际执行的回调将来自两个不同的 onPageBack
+  if (lastSpreadIndex > onPageBackIndex) {
+    throw new MpBackConfigError(
+      `${id}：onPageBack 之后存在对象展开（...），运行时实际生效的回调可能与构建期读取的配置不一致；` +
+        `请将展开移到 onPageBack 之前`
+    )
+  }
 
   // —— per-page 配置：对象写法 { handler, preventDefault, ... } 静态提取字面量 ——
   let staticOptions: Partial<ResolvedBackConfig> = {}
