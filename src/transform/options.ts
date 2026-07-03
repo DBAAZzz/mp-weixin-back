@@ -1,12 +1,14 @@
 import MagicString from 'magic-string'
 import { babelParse } from 'ast-kit'
 import type {
+  BlockStatement,
   ObjectExpression,
   ObjectMethod,
   ObjectProperty,
   SpreadElement,
 } from '@babel/types'
 import { ON_PAGE_BACK } from '../constants'
+import { MpBackConfigError } from '../errors'
 import { extractStaticOptions } from './extract'
 import {
   buildOptionsBeforeLeaveMethod,
@@ -53,22 +55,17 @@ export function optionsTransform(
   }
   if (!componentObject) return
 
-  // —— 扫描组件选项 ——
-  let dataMethod: ObjectMethod | null = null
-  let methodsObject: ObjectExpression | null = null
+  // —— 扫描组件选项（同名键重复时取最后一个，与对象字面量运行时语义一致） ——
+  let dataOption: ObjectMethod | ObjectProperty | null = null
+  let methodsOption: ObjectMethod | ObjectProperty | null = null
   let onPageBackOption: ObjectMethod | ObjectProperty | null = null
 
   for (const prop of componentObject.properties) {
+    if (prop.type === 'SpreadElement') continue
     const name = propertyName(prop)
-    if (name === 'data' && prop.type === 'ObjectMethod') {
-      dataMethod = prop
-    }
-    if (name === 'methods' && prop.type === 'ObjectProperty' && prop.value.type === 'ObjectExpression') {
-      methodsObject = prop.value
-    }
-    if (name === ON_PAGE_BACK && (prop.type === 'ObjectMethod' || prop.type === 'ObjectProperty')) {
-      onPageBackOption = prop
-    }
+    if (name === 'data') dataOption = prop
+    if (name === 'methods') methodsOption = prop
+    if (name === ON_PAGE_BACK) onPageBackOption = prop
   }
 
   if (!onPageBackOption) return
@@ -91,14 +88,19 @@ export function optionsTransform(
   // —— template：注入 page-container ——
   injectPageContainer(ms, template, buildPageContainerTag(context.config.pageContainer))
 
-  // —— data：注入拦截状态（有 data 方法则插入其返回对象，否则新增 data 方法） ——
+  // —— data：注入拦截状态 ——
+  // 已有 data 时必须原位注入其返回对象：在组件对象头部新增 data 键会被
+  // 用户靠后的同名键覆盖（对象重名键后者胜出），拦截会静默失效，
+  // 因此无法静态定位返回对象时报错而不是插入重复键
   const stateProps = `__MP_BACK_SHOW_PAGE_CONTAINER__: ${cfg.initialValue}, __MP_BACK_FREQUENCY__: 1,`
-  const dataReturn = dataMethod ? findDataReturnObject(dataMethod) : null
-  if (dataMethod && !dataReturn) {
-    context.log.error(`${id}：data() 未直接返回对象字面量，无法注入拦截状态，页面返回拦截未生效`)
-    return
-  }
-  if (dataReturn) {
+  if (dataOption) {
+    const dataReturn = resolveDataReturnObject(dataOption)
+    if (!dataReturn) {
+      throw new MpBackConfigError(
+        `${id}：data 必须是方法或返回对象字面量的函数（支持 data() { return {...} }、` +
+          `data: () => ({...})、data: function () { return {...} }），否则无法注入拦截状态`
+      )
+    }
     ms.appendRight(base + dataReturn.start! + 1, `\n    ${stateProps}`)
   } else {
     ms.appendRight(
@@ -107,10 +109,19 @@ export function optionsTransform(
     )
   }
 
-  // —— methods：注入 onBeforeLeave（有 methods 则插入，否则新增） ——
+  // —— methods：注入 beforeleave 处理方法（同理：已有 methods 时必须原位注入） ——
   const globalHookCode = serializeGlobalHook(context, context.getPageById(id))
   const method = buildOptionsBeforeLeaveMethod(cfg, globalHookCode)
-  if (methodsObject) {
+  if (methodsOption) {
+    const methodsObject =
+      methodsOption.type === 'ObjectProperty' && methodsOption.value.type === 'ObjectExpression'
+        ? methodsOption.value
+        : null
+    if (!methodsObject) {
+      throw new MpBackConfigError(
+        `${id}：methods 必须是对象字面量，否则无法注入返回拦截的处理方法`
+      )
+    }
     ms.appendRight(base + methodsObject.start! + 1, `\n  ${method},`)
   } else {
     ms.appendRight(base + componentObject.start! + 1, `\n  methods: {\n  ${method},\n  },`)
@@ -129,8 +140,27 @@ function propertyName(prop: ObjectMethod | ObjectProperty | SpreadElement): stri
   return null
 }
 
-function findDataReturnObject(dataMethod: ObjectMethod): ObjectExpression | null {
-  for (const stmt of dataMethod.body.body) {
+/**
+ * 静态定位 data 选项的返回对象字面量。
+ * 支持方法简写、function 表达式和箭头函数（表达式体/块体）。
+ */
+function resolveDataReturnObject(dataOption: ObjectMethod | ObjectProperty): ObjectExpression | null {
+  if (dataOption.type === 'ObjectMethod') {
+    return findReturnObject(dataOption.body)
+  }
+  const value = dataOption.value
+  if (value.type === 'FunctionExpression') {
+    return findReturnObject(value.body)
+  }
+  if (value.type === 'ArrowFunctionExpression') {
+    if (value.body.type === 'ObjectExpression') return value.body
+    if (value.body.type === 'BlockStatement') return findReturnObject(value.body)
+  }
+  return null
+}
+
+function findReturnObject(block: BlockStatement): ObjectExpression | null {
+  for (const stmt of block.body) {
     if (stmt.type === 'ReturnStatement' && stmt.argument?.type === 'ObjectExpression') {
       return stmt.argument
     }

@@ -8,6 +8,7 @@ import IndexDefault from './data/index-default.vue'
 import IndexDefaultFn from './data/index-default-fn.vue'
 import IndexDefaultObject from './data/index-default-object.vue'
 import IndexDefaultConflict from './data/index-default-conflict.vue'
+import IndexDefaultArrowData from './data/index-default-arrow-data.vue'
 
 const flushTimers = () => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -157,6 +158,21 @@ describe('generate page-container components', () => {
       // 用户自己的 onBeforeLeave 原样保留、可正常调用
       vm.onBeforeLeave()
       expect(vm.userCalled).toBe(true)
+    })
+
+    it('data 为箭头函数属性（data: () => ({})）时状态注入其返回对象', async () => {
+      const wrapper = mount(IndexDefaultArrowData)
+      await wrapper.vm.$nextTick()
+      const vm = wrapper.vm as any
+
+      // 状态注入到用户 data 的返回对象中，而不是插入会被覆盖的重复 data 键
+      expect(vm.__MP_BACK_SHOW_PAGE_CONTAINER__).toBe(true)
+      expect(vm.__MP_BACK_FREQUENCY__).toBe(1)
+      expect(vm.backCount).toBe(0)
+
+      vm.__MP_BACK_ON_BEFORE_LEAVE__()
+      expect(vm.backCount).toBe(1)
+      expect(navigateBack).toHaveBeenCalled()
     })
   })
 })
