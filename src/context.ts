@@ -2,13 +2,18 @@ import path from 'path'
 import fs from 'fs'
 import JSON5 from 'json5'
 import { red, white, green } from 'kolorist'
-import { ContextConfig, PagesJson } from '../types'
-import { transformVueFile } from '../utils'
+import type { ContextConfig, PagesJson } from './types'
+import { transformVueFile } from './transform'
 
-export class pageContext {
+export class PageContext {
   private logPreText = '[mp-weixin-back] : '
-  config: ContextConfig
+  readonly config: ContextConfig
   pages: string[] = []
+  /** pages.json 的绝对路径；找不到时为 null（此时禁用页面级过滤） */
+  readonly pagesJsonPath: string | null
+  /** 页面源码目录相对 root 的前缀：CLI 项目为 'src'，HBuilderX 项目为 '' */
+  private sourceBase = 'src'
+
   log = {
     info: (text: string) => {
       console.log(white(this.logPreText + text))
@@ -25,53 +30,74 @@ export class pageContext {
 
   constructor(config: ContextConfig) {
     this.config = config
+    this.pagesJsonPath = this.resolvePagesJsonPath()
   }
-  getPagesJsonPath() {
-    const pagesJsonPath = path.join(this.config.root, 'src/pages.json')
-    return pagesJsonPath
-  }
-  // 获取页面配置详情
-  async getPagesJsonInfo() {
-    const hasPagesJson = fs.existsSync(this.getPagesJsonPath())
-    if (!hasPagesJson) return
-    try {
-      const content = await fs.promises.readFile(this.getPagesJsonPath(), 'utf-8')
-      const pagesContent = JSON5.parse(content) as PagesJson
-      const { pages, subpackages } = pagesContent
-      if (pages) {
-        const mainPages = pages.reduce((acc: string[], current) => {
-          acc.push(current.path)
-          return acc
-        }, [])
-        this.pages.push(...mainPages)
+
+  /** 依次探测 src/pages.json（CLI 项目）和 pages.json（HBuilderX 项目） */
+  private resolvePagesJsonPath(): string | null {
+    for (const base of ['src', '']) {
+      const candidate = path.join(this.config.root, base, 'pages.json')
+      if (fs.existsSync(candidate)) {
+        this.sourceBase = base
+        return candidate
       }
-      if (subpackages) {
-        for (let i = 0; i < subpackages.length; i++) {
-          const element = subpackages[i]
-          const root = element.root
-          const subPages = element.pages.reduce((acc: string[], current) => {
-            acc.push(`${root}/${current.path}`.replace('//', '/'))
-            return acc
-          }, [])
-          this.pages.push(...subPages)
+    }
+    return null
+  }
+
+  get hasPages(): boolean {
+    return this.pagesJsonPath !== null
+  }
+
+  isPagesJson(file: string): boolean {
+    return this.pagesJsonPath !== null && path.normalize(file) === path.normalize(this.pagesJsonPath)
+  }
+
+  /** 读取并解析 pages.json；dev 下 pages.json 变更时会被重新调用 */
+  async loadPages(): Promise<void> {
+    if (!this.pagesJsonPath) {
+      this.log.debugLog('未找到 src/pages.json 或 pages.json，禁用页面级过滤（所有使用 helper 的 .vue 文件都会被处理）')
+      return
+    }
+    try {
+      const content = await fs.promises.readFile(this.pagesJsonPath, 'utf-8')
+      const pagesContent = JSON5.parse(content) as PagesJson
+      const next: string[] = []
+      for (const page of pagesContent.pages ?? []) {
+        next.push(page.path)
+      }
+      const subpackages = [...(pagesContent.subpackages ?? []), ...(pagesContent.subPackages ?? [])]
+      for (const sub of subpackages) {
+        for (const page of sub.pages ?? []) {
+          next.push(`${sub.root}/${page.path}`.replace('//', '/'))
         }
       }
+      this.pages = next
+      this.log.debugLog(`已加载 ${next.length} 个页面（${this.pagesJsonPath}）`)
     } catch (error: unknown) {
       this.log.error(
-        `Failed to read pages.json. Make sure src/pages.json exists and is valid JSON/JSON5.\n` +
-          `  Path checked: ${this.getPagesJsonPath()}\n` +
+        `Failed to read pages.json. Make sure it is valid JSON/JSON5.\n` +
+          `  Path checked: ${this.pagesJsonPath}\n` +
           `  Docs: https://github.com/DBAAZzz/mp-weixin-back#%EF%B8%8F-vite-配置`
       )
       this.log.debugLog(String(error))
     }
   }
-  // 获取指定id的page
-  getPageById(id: string) {
-    const path = (id.split('src/')[1] || '').replace('.vue', '')
-    // 页面级别
-    return this.pages.find((i) => i === path) || null
+
+  /** 获取指定 id 对应的页面路径；不是已注册页面（或无 pages.json）时返回 null */
+  getPageById(id: string): string | null {
+    if (!this.hasPages) return null
+    const filename = id.split('?')[0]
+    const rel = path
+      .relative(path.join(this.config.root, this.sourceBase), filename)
+      .split(path.sep)
+      .join('/')
+    if (rel.startsWith('..')) return null
+    const pagePath = rel.replace(/\.vue$/, '')
+    return this.pages.includes(pagePath) ? pagePath : null
   }
+
   async transform(code: string, id: string) {
-    return await transformVueFile.call(this, code, id)
+    return await transformVueFile(this, code, id)
   }
 }

@@ -1,6 +1,6 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
-import mpBack from './dist/index.mjs'
+import mpBack from './src/index'
 
 export default defineConfig({
   plugins: [
