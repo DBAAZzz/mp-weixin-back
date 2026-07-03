@@ -55,16 +55,30 @@ export function optionsTransform(
   }
   if (!componentObject) return
 
-  // —— 扫描组件选项（同名键重复时取最后一个，与对象字面量运行时语义一致） ——
+  // —— 扫描组件选项（同名键重复时取最后一个，与对象字面量运行时语义一致；
+  // 记录位置索引用于判断 spread 是否可能在运行时覆盖注入内容） ——
   let dataOption: ObjectMethod | ObjectProperty | null = null
   let methodsOption: ObjectMethod | ObjectProperty | null = null
   let onPageBackOption: ObjectMethod | ObjectProperty | null = null
+  let dataIndex = -1
+  let methodsIndex = -1
+  let lastSpreadIndex = -1
 
-  for (const prop of componentObject.properties) {
-    if (prop.type === 'SpreadElement') continue
+  for (let index = 0; index < componentObject.properties.length; index++) {
+    const prop = componentObject.properties[index]
+    if (prop.type === 'SpreadElement') {
+      lastSpreadIndex = index
+      continue
+    }
     const name = propertyName(prop)
-    if (name === 'data') dataOption = prop
-    if (name === 'methods') methodsOption = prop
+    if (name === 'data') {
+      dataOption = prop
+      dataIndex = index
+    }
+    if (name === 'methods') {
+      methodsOption = prop
+      methodsIndex = index
+    }
     if (name === ON_PAGE_BACK) onPageBackOption = prop
   }
 
@@ -91,9 +105,17 @@ export function optionsTransform(
   // —— data：注入拦截状态 ——
   // 已有 data 时必须原位注入其返回对象：在组件对象头部新增 data 键会被
   // 用户靠后的同名键覆盖（对象重名键后者胜出），拦截会静默失效，
-  // 因此无法静态定位返回对象时报错而不是插入重复键
+  // 因此无法静态定位返回对象时报错而不是插入重复键。
+  // 对象展开（...base）的内容静态不可知：它出现在显式键之后会在运行时覆盖注入，
+  // 需要新增键时插前面会被覆盖、插后面会反向抹掉展开携带的同名选项——
+  // 两个方向都产生错误行为，只能报错要求用户显式声明
   const stateProps = `__MP_BACK_SHOW_PAGE_CONTAINER__: ${cfg.initialValue}, __MP_BACK_FREQUENCY__: 1,`
   if (dataOption) {
+    if (lastSpreadIndex > dataIndex) {
+      throw new MpBackConfigError(
+        `${id}：data 之后存在对象展开（...），注入的拦截状态可能在运行时被覆盖；请将展开移到 data 之前`
+      )
+    }
     const dataReturn = resolveDataReturnObject(dataOption)
     if (!dataReturn) {
       throw new MpBackConfigError(
@@ -103,16 +125,27 @@ export function optionsTransform(
     }
     ms.appendRight(base + dataReturn.start! + 1, `\n    ${stateProps}`)
   } else {
+    if (lastSpreadIndex >= 0) {
+      throw new MpBackConfigError(
+        `${id}：组件选项使用了对象展开（...）且未显式声明 data，插件无法安全注入拦截状态；` +
+          `请显式声明 data() { return {} }`
+      )
+    }
     ms.appendRight(
       base + componentObject.start! + 1,
       `\n  data() {\n    return { ${stateProps} }\n  },`
     )
   }
 
-  // —— methods：注入 beforeleave 处理方法（同理：已有 methods 时必须原位注入） ——
+  // —— methods：注入 beforeleave 处理方法（spread 覆盖风险与 data 同理） ——
   const globalHookCode = serializeGlobalHook(context, context.getPageById(id))
   const method = buildOptionsBeforeLeaveMethod(cfg, globalHookCode)
   if (methodsOption) {
+    if (lastSpreadIndex > methodsIndex) {
+      throw new MpBackConfigError(
+        `${id}：methods 之后存在对象展开（...），注入的处理方法可能在运行时被覆盖；请将展开移到 methods 之前`
+      )
+    }
     const methodsObject =
       methodsOption.type === 'ObjectProperty' && methodsOption.value.type === 'ObjectExpression'
         ? methodsOption.value
@@ -124,6 +157,12 @@ export function optionsTransform(
     }
     ms.appendRight(base + methodsObject.start! + 1, `\n  ${method},`)
   } else {
+    if (lastSpreadIndex >= 0) {
+      throw new MpBackConfigError(
+        `${id}：组件选项使用了对象展开（...）且未显式声明 methods，插件无法安全注入返回拦截的处理方法；` +
+          `请显式声明 methods: {}`
+      )
+    }
     ms.appendRight(base + componentObject.start! + 1, `\n  methods: {\n  ${method},\n  },`)
   }
 

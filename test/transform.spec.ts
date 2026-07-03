@@ -63,6 +63,16 @@ describe('plugin transform', () => {
       expect(result).toBeUndefined()
     })
 
+    it('只 import helper 未注册回调的页面不注入', async () => {
+      const importOnly = setupPage(`import onPageBack from 'mp-weixin-back-helper'\nconst a = 1`)
+      expect(await transformWith(importOnly)).toBeUndefined()
+
+      const activeOnly = setupPage(
+        `import { activeMpBack } from 'mp-weixin-back-helper'\nconst start = () => activeMpBack()`
+      )
+      expect(await transformWith(activeOnly)).toBeUndefined()
+    })
+
     it('模板已有 page-container 时跳过注入', async () => {
       const code = setupPage(
         `import onPageBack from 'mp-weixin-back-helper'\nonPageBack(() => {})`,
@@ -227,6 +237,31 @@ describe('plugin transform', () => {
     it('methods 存在但不是对象字面量时报错', async () => {
       const page = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nimport myMethods from './methods'\nexport default {\n  methods: myMethods,\n  onPageBack() {},\n}\n</script>\n`
       await expect(transformWith(page)).rejects.toThrow(/methods 必须是对象字面量/)
+    })
+
+    it('script 与 script setup 并存时，setup 无注册则回落处理普通 script 的 onPageBack', async () => {
+      const code = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nexport default {\n  onPageBack() {\n    console.log('options back')\n  },\n}\n</script>\n\n<script setup>\nconst a = 1\n</script>\n`
+      const result = await transformWith(code)
+      expect(result).toBeDefined()
+      expect(result.code).toContain('__MP_BACK_ON_BEFORE_LEAVE__()')
+      expect(result.code).toContain('<page-container')
+    })
+
+    it('对象展开且未显式声明 data/methods 时报错，不插入会被覆盖的键', async () => {
+      const page = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nconst base = { data() { return {} } }\nexport default {\n  ...base,\n  onPageBack() {},\n}\n</script>\n`
+      await expect(transformWith(page)).rejects.toThrow(/对象展开/)
+    })
+
+    it('显式 data/methods 之后存在对象展开时报错', async () => {
+      const page = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nconst base = {}\nexport default {\n  data() {\n    return {}\n  },\n  methods: {},\n  ...base,\n  onPageBack() {},\n}\n</script>\n`
+      await expect(transformWith(page)).rejects.toThrow(/之后存在对象展开/)
+    })
+
+    it('展开在显式 data/methods 之前时正常注入（显式键运行时胜出）', async () => {
+      const page = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nconst base = {}\nexport default {\n  ...base,\n  data() {\n    return { a: 1 }\n  },\n  methods: {},\n  onPageBack() {},\n}\n</script>\n`
+      const result = await transformWith(page)
+      expect(result.code).toContain('__MP_BACK_SHOW_PAGE_CONTAINER__: true, __MP_BACK_FREQUENCY__: 1,')
+      expect(result.code).toContain('__MP_BACK_ON_BEFORE_LEAVE__()')
     })
 
     it('无 data、无 methods 时自动补齐', async () => {

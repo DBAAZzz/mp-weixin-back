@@ -30,8 +30,12 @@ export async function transformVueFile(context: PageContext, code: string, id: s
     return
   }
 
+  // Vue 允许 <script> 与 <script setup> 并存：composition 路径优先，
+  // 它未实际处理（setup 中没有 onPageBack 注册）时回落到 options 路径，
+  // 处理普通 <script> 里的 onPageBack 选项
   if (scriptSetup?.content) {
-    return compositionTransform(context, code, template, scriptSetup, id)
+    const result = compositionTransform(context, code, template, scriptSetup, id)
+    if (result) return result
   }
   if (script?.content) {
     return optionsTransform(context, code, template, script, id)

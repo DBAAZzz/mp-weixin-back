@@ -64,6 +64,13 @@ export function compositionTransform(
     },
   })
 
+  // 只 import 未注册回调的页面不注入（避免无回调页面被挂上 page-container
+  // 和默认 navigateBack）；此时 active/inactive 调用走虚拟模块的 no-op 并在 dev 下警告
+  if (registerCalls.length === 0) {
+    context.log.debugLog(`${id} import 了 mp-weixin-back-helper 但未调用 onPageBack，跳过注入`)
+    return
+  }
+
   // —— 静态提取 per-page 配置（仅取第一个带配置的调用） ——
   let staticOptions: Partial<ResolvedBackConfig> = {}
   let optionsFound = false
