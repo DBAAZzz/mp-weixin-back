@@ -54,11 +54,18 @@ export default defineConfig({
       debug: false, // 调试模式，默认为 false
       onPageBack: ({ page }) => {
         console.log('返回事件触发，当前页面：', page)
-      }, // 全局钩子，任意页面触发时执行
+      }, // 全局钩子，任意页面触发时执行。⚠️ 该函数会被序列化注入页面，必须自包含（不能引用 vite.config.ts 中的变量或 import 的模块）
+      pageContainer: {
+        zIndex: 1, // 注入的 page-container 的 z-index，默认 1
+        overlay: false, // 是否显示遮罩，默认 false
+        duration: false, // 动画时长（ms），默认 false 关闭
+      },
     }),
   ],
 })
 ```
+
+> 插件会自动探测 `src/pages.json`（CLI 项目）或根目录 `pages.json`（HBuilderX 项目）；多端构建时仅在 `UNI_PLATFORM=mp-weixin` 下生效，其他平台自动降级为 no-op。
 
 ## 🚀 快速开始
 
@@ -133,6 +140,8 @@ onPageBack(
 | `frequency`      | `number`  | `1`     | 阻止次数                                                        |
 | `initialValue`   | `boolean` | `true`  | 是否立即启用监听（设为 `false` 时需手动调用 `activeMpBack()`）  |
 
+> ⚠️ 这些配置在**构建期静态读取**，必须直接写布尔/数字字面量（如 `{ frequency: 3 }`），不能传变量或表达式。需要运行时动态控制时请使用 `activeMpBack()` / `inactiveMpBack()`。
+
 ### 辅助方法
 
 #### `activeMpBack()`
@@ -167,32 +176,54 @@ onPageBack(
 | ---------------- | ------------------------------------------- | ------- | -------------------------- |
 | `preventDefault` | `boolean`                                   | `false` | 全局阻止默认返回行为       |
 | `frequency`      | `number`                                    | `1`     | 全局阻止次数               |
+| `initialValue`   | `boolean`                                   | `true`  | 全局是否立即启用监听       |
 | `debug`          | `boolean`                                   | `false` | 开发模式下开启调试日志     |
-| `onPageBack`     | `(params: { page: string }) => void`        | —       | 全局回调，任意页面触发执行 |
+| `onPageBack`     | `(params: { page: string \| null }) => void` | —       | 全局回调，任意页面触发执行。必须自包含（会被序列化注入页面，闭包变量运行时不可用，检测到时构建期会警告） |
+| `pageContainer`  | `{ zIndex?, overlay?, duration? }`          | 见上文  | 注入的 page-container 组件属性 |
 
-## 🎯 选项式 API 支持（未完善）
+## 🎯 选项式 API 支持
 
-组件内直接声明
-
-在 Vue 组件的选项对象中直接定义 onPageBack 方法：
+在 Vue 组件的选项对象中直接定义 `onPageBack`，支持三种写法：
 
 ```html
-<template>
-  <div class="container">
-    <div>当前页面内容</div>
-  </div>
-</template>
-
 <script>
   export default {
-    // 读取 vite 中的配置
+    // 写法一：方法简写（使用 vite 中的全局配置）
     onPageBack() {
       console.log('检测到返回操作')
-      // 业务逻辑处理
     },
   }
 </script>
 ```
+
+```html
+<script>
+  export default {
+    // 写法二：函数属性
+    onPageBack: function () {
+      console.log('检测到返回操作')
+    },
+  }
+</script>
+```
+
+```html
+<script>
+  export default {
+    // 写法三：对象写法，支持页面级配置（与 composition API 对齐）
+    onPageBack: {
+      preventDefault: true,
+      frequency: 3,
+      initialValue: true,
+      handler() {
+        console.log('检测到返回操作')
+      },
+    },
+  }
+</script>
+```
+
+回调中的 `this` 指向组件实例，可直接访问 `data` / `methods`。
 
 ## 🛠 类型支持
 
@@ -227,7 +258,8 @@ onPageBack(
 
 ### Q3: 不生效怎么排查？
 
-1. 确认 `src/pages.json` 存在且格式正确
-2. 确认是页面级 `.vue` 文件（非组件）
-3. 开启 `debug: true` 查看插件日志
-4. 确认 `@vue/compiler-sfc` 已安装：`pnpm add -D @vue/compiler-sfc`
+1. 确认 `src/pages.json` 或根目录 `pages.json` 存在且格式正确
+2. 确认是 `pages.json` 中注册的页面级 `.vue` 文件（组件中使用不会注入，dev 下运行时会有 console 警告）
+3. 多端项目确认构建平台为 `mp-weixin`（其他平台插件自动禁用）
+4. 开启 `debug: true` 查看插件日志
+5. 确认 `@vue/compiler-sfc` 已安装：`pnpm add -D @vue/compiler-sfc`

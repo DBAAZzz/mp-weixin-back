@@ -8,5 +8,5 @@ export default defineBuildConfig({
     emitCJS: true,
   },
   failOnWarn: false,
-  externals: ['vite', 'vue', '@babel/generator'],
+  externals: ['vite', 'vue'],
 })
