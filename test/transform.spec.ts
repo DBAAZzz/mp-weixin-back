@@ -117,6 +117,35 @@ describe('plugin transform', () => {
       )
       await expect(transformWith(code)).rejects.toThrow(/字面量/)
     })
+
+    it('配置项按字段校验字面量类型（frequency 必须为数字，preventDefault/initialValue 必须为布尔）', async () => {
+      const page = (options: string) =>
+        setupPage(`import onPageBack from 'mp-weixin-back-helper'\nonPageBack(() => {}, ${options})`)
+      await expect(transformWith(page('{ frequency: true }'))).rejects.toThrow(/frequency 必须是数字字面量/)
+      await expect(transformWith(page('{ preventDefault: 2 }'))).rejects.toThrow(/preventDefault 必须是布尔字面量/)
+      await expect(transformWith(page('{ initialValue: 0 }'))).rejects.toThrow(/initialValue 必须是布尔字面量/)
+    })
+
+    it('嵌套作用域中被遮蔽的同名标识符不被改写（binding 校验）', async () => {
+      const code = setupPage(
+        [
+          `import onPageBack, { activeMpBack } from 'mp-weixin-back-helper'`,
+          `onPageBack(() => {})`,
+          `function run(onPageBack) {`,
+          `  onPageBack('not plugin')`,
+          `}`,
+          `const use = (activeMpBack) => activeMpBack(1)`,
+        ].join('\n')
+      )
+      const result = await transformWith(code)
+      // 顶层调用（binding 来自 helper import）被改写
+      expect(result.code).toContain('__MP_BACK_REGISTER__(() => {})')
+      // 遮蔽的参数调用原样保留
+      expect(result.code).toContain(`onPageBack('not plugin')`)
+      expect(result.code).toContain('activeMpBack(1)')
+      expect(result.code).not.toContain(`__MP_BACK_REGISTER__('not plugin')`)
+      expect(result.code).not.toContain('activeMpBack(__MP_WEIXIN_ACTIVEBACK__, 1)')
+    })
   })
 
   describe('全局 onPageBack 钩子序列化', () => {
