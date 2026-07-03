@@ -1,6 +1,8 @@
 import MagicString from 'magic-string'
-import { babelParse, walkAST } from 'ast-kit'
-import type { CallExpression, Node } from '@babel/types'
+import { parse, type ParserPlugin } from '@babel/parser'
+import _traverse from '@babel/traverse'
+import type { NodePath } from '@babel/traverse'
+import type { CallExpression, File, ImportDeclaration } from '@babel/types'
 import { virtualFileId } from '../constants'
 import { extractStaticOptions } from './extract'
 import {
@@ -12,7 +14,12 @@ import {
 import type { PageContext } from '../context'
 import type { ResolvedBackConfig, SfcBlock } from '../types'
 
+// @babel/traverse 是 CJS 包，ESM 下 default 导出需要二次取值
+const traverse: typeof _traverse = (_traverse as any).default ?? _traverse
+
 type TransformResult = { code: string; map: ReturnType<MagicString['generateMap']> } | undefined
+
+type HelperExport = 'onPageBack' | 'activeMpBack' | 'inactiveMpBack'
 
 /**
  * <script setup> 转换。
@@ -21,6 +28,10 @@ type TransformResult = { code: string; map: ReturnType<MagicString['generateMap'
  * - onPageBack(cb, opts) 调用的 callee 原位改写为注入的 __MP_BACK_REGISTER__
  * - activeMpBack()/inactiveMpBack() 按 AST 精确偏移插入第一个实参
  * - 运行时声明（状态、注册函数、onBeforeLeave）前插到 script 内容头部
+ *
+ * 调用识别基于 Babel 作用域分析：仅当 callee 的 binding 确实是
+ * mp-weixin-back-helper 的 import specifier 时才改写，嵌套作用域中的
+ * 同名参数/局部变量不受影响。
  */
 export function compositionTransform(
   context: PageContext,
@@ -30,41 +41,25 @@ export function compositionTransform(
   id: string
 ): TransformResult {
   const base = scriptSetup.loc.start.offset
-  const ast = babelParse(scriptSetup.content, scriptSetup.lang)
+  const ast = parseScript(scriptSetup.content, scriptSetup.lang)
 
-  // —— 收集 helper 的 import 及各导出的本地名（仅精确匹配模块名） ——
-  let onPageBackLocal: string | null = null
-  let activeLocal: string | null = null
-  let inactiveLocal: string | null = null
+  // 快速门控：没有来自 helper 的 import 就不处理（本地同名函数不误伤）
+  const hasHelperImport = ast.program.body.some(
+    (stmt) => stmt.type === 'ImportDeclaration' && stmt.source.value === virtualFileId
+  )
+  if (!hasHelperImport) return
 
-  for (const stmt of ast.body) {
-    if (stmt.type !== 'ImportDeclaration' || stmt.source.value !== virtualFileId) continue
-    for (const specifier of stmt.specifiers) {
-      if (specifier.type === 'ImportDefaultSpecifier') {
-        onPageBackLocal = specifier.local.name
-      }
-      if (specifier.type === 'ImportSpecifier' && specifier.imported.type === 'Identifier') {
-        if (specifier.imported.name === 'activeMpBack') activeLocal = specifier.local.name
-        if (specifier.imported.name === 'inactiveMpBack') inactiveLocal = specifier.local.name
-      }
-    }
-  }
-
-  // 未从 helper import：本地同名 onPageBack 不做处理，避免误伤
-  if (!onPageBackLocal && !activeLocal && !inactiveLocal) return
-
-  // —— 收集需要改写的调用（任意表达式位置，不限于语句级） ——
+  // —— 基于 binding 收集需要改写的调用（任意表达式位置，不限于语句级） ——
   const registerCalls: CallExpression[] = []
   const activeCalls: CallExpression[] = []
   const inactiveCalls: CallExpression[] = []
 
-  walkAST<Node>(ast, {
-    enter(node) {
-      if (node.type !== 'CallExpression' || node.callee.type !== 'Identifier') return
-      const name = node.callee.name
-      if (onPageBackLocal && name === onPageBackLocal) registerCalls.push(node)
-      else if (activeLocal && name === activeLocal) activeCalls.push(node)
-      else if (inactiveLocal && name === inactiveLocal) inactiveCalls.push(node)
+  traverse(ast, {
+    CallExpression(path) {
+      const exportName = resolveHelperCallee(path)
+      if (exportName === 'onPageBack') registerCalls.push(path.node)
+      else if (exportName === 'activeMpBack') activeCalls.push(path.node)
+      else if (exportName === 'inactiveMpBack') inactiveCalls.push(path.node)
     },
   })
 
@@ -124,6 +119,39 @@ ${buildCompositionBeforeLeave(cfg, globalHookCode)}
     code: ms.toString(),
     map: ms.generateMap({ hires: true, source: id, includeContent: true }),
   }
+}
+
+function parseScript(content: string, lang?: string): File {
+  const plugins: ParserPlugin[] = []
+  if (lang === 'ts' || lang === 'tsx') plugins.push('typescript')
+  if (lang === 'jsx' || lang === 'tsx') plugins.push('jsx')
+  return parse(content, { sourceType: 'module', plugins })
+}
+
+/**
+ * 判定调用的 callee 是否解析到 mp-weixin-back-helper 的某个导出。
+ * 通过作用域 binding 校验声明来源，而不是名字匹配。
+ */
+function resolveHelperCallee(path: NodePath<CallExpression>): HelperExport | null {
+  const callee = path.node.callee
+  if (callee.type !== 'Identifier') return null
+
+  const binding = path.scope.getBinding(callee.name)
+  if (!binding) return null
+
+  const declaration = binding.path
+  const parent = declaration.parent as ImportDeclaration | undefined
+  if (parent?.type !== 'ImportDeclaration' || parent.source.value !== virtualFileId) return null
+
+  if (declaration.isImportDefaultSpecifier()) return 'onPageBack'
+  if (declaration.isImportSpecifier()) {
+    const imported = declaration.node.imported
+    if (imported.type === 'Identifier') {
+      if (imported.name === 'activeMpBack') return 'activeMpBack'
+      if (imported.name === 'inactiveMpBack') return 'inactiveMpBack'
+    }
+  }
+  return null
 }
 
 /** 在调用表达式的实参列表头部插入一个标识符（有实参插在首参前，无实参插在右括号前） */

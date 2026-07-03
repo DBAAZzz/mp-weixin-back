@@ -2,7 +2,14 @@ import type { ObjectExpression } from '@babel/types'
 import { MpBackConfigError } from '../errors'
 import type { OnPageBackOptions } from '../types'
 
-const OPTION_KEYS = new Set(['preventDefault', 'frequency', 'initialValue'])
+/** 各配置项允许的字面量类型：类型错误会生成语义错误的代码，必须在构建期拦截 */
+const OPTION_TYPES = {
+  preventDefault: { nodeType: 'BooleanLiteral', label: '布尔' },
+  initialValue: { nodeType: 'BooleanLiteral', label: '布尔' },
+  frequency: { nodeType: 'NumericLiteral', label: '数字' },
+} as const
+
+type OptionKey = keyof typeof OPTION_TYPES
 
 /**
  * 从 AST 静态提取 onPageBack 的字面量配置。
@@ -35,14 +42,17 @@ export function extractStaticOptions(
     if (key === null) {
       throw new MpBackConfigError(`${where}：onPageBack 配置的属性名必须是标识符或字符串字面量`)
     }
-    if (!OPTION_KEYS.has(key)) continue
+    if (!(key in OPTION_TYPES)) continue
 
+    const expected = OPTION_TYPES[key as OptionKey]
     const value = prop.value
-    if (value.type === 'BooleanLiteral' || value.type === 'NumericLiteral') {
-      ;(result as Record<string, boolean | number>)[key] = value.value
+    if (value.type === expected.nodeType) {
+      ;(result as Record<string, boolean | number>)[key] = (
+        value as { value: boolean | number }
+      ).value
     } else {
       throw new MpBackConfigError(
-        `${where}：onPageBack 配置项 ${key} 必须是布尔/数字字面量（该值在构建期读取，收到 ${value.type}）。` +
+        `${where}：onPageBack 配置项 ${key} 必须是${expected.label}字面量（该值在构建期读取，收到 ${value.type}）。` +
           `如需运行时控制，请使用 activeMpBack()/inactiveMpBack()`
       )
     }
