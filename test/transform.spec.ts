@@ -257,6 +257,11 @@ describe('plugin transform', () => {
       await expect(transformWith(page)).rejects.toThrow(/之后存在对象展开/)
     })
 
+    it('onPageBack 之后存在对象展开时报错（配置与实际回调可能不一致）', async () => {
+      const page = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nconst base = { onPageBack() { console.log('base') } }\nexport default {\n  onPageBack: {\n    preventDefault: true,\n    handler() { console.log('explicit') },\n  },\n  ...base,\n  data() {\n    return {}\n  },\n  methods: {},\n}\n</script>\n`
+      await expect(transformWith(page)).rejects.toThrow(/onPageBack 之后存在对象展开/)
+    })
+
     it('展开在显式 data/methods 之前时正常注入（显式键运行时胜出）', async () => {
       const page = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nconst base = {}\nexport default {\n  ...base,\n  data() {\n    return { a: 1 }\n  },\n  methods: {},\n  onPageBack() {},\n}\n</script>\n`
       const result = await transformWith(page)
