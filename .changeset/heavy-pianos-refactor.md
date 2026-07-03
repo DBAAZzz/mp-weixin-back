@@ -16,6 +16,9 @@
 - composition 页面 `onPageBack` 第二参数为变量/表达式时构建期报错，不再静默回退全局配置
 - 注入的 beforeleave 处理函数改名为 `__MP_BACK_ON_BEFORE_LEAVE__`，不再与用户自定义的 `onBeforeLeave` 方法/变量冲突
 - options API 的 `data` 支持函数属性写法（`data: () => ({...})` / `data: function () {...}`），状态原位注入其返回对象；`data`/`methods` 存在但无法静态注入时构建期报错，不再插入会被同名键覆盖的重复键
+- `<script>` 与 `<script setup>` 并存时，setup 中无 onPageBack 注册则回落处理普通 script 的 onPageBack 选项
+- 只 import helper 未调用 onPageBack 的页面不再注入拦截逻辑（此前 import 即生效，会给无回调页面挂上默认 navigateBack）
+- 组件选项存在对象展开（`...base`）且可能覆盖注入内容时构建期报错（展开内容静态不可知，插前插后都会产生错误行为）
 
 #### 架构改进
 
@@ -30,4 +33,4 @@
 
 - 目录重组至 `src/`，移除 `@babel/generator` 依赖
 - 新增 CI（typecheck + test + build），release 前置 typecheck 与测试
-- 测试从 3 个扩展到 34 个（transform 单元测试、pages.json 解析、options API 三种写法、frequency 语义、binding 遮蔽、命名冲突、data 函数属性写法等）
+- 测试从 3 个扩展到 39 个（transform 单元测试、pages.json 解析、options API 三种写法、frequency 语义、binding 遮蔽、命名冲突、data 函数属性写法、双 script 块、对象展开等）
