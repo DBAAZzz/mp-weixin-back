@@ -13,6 +13,8 @@
 - `activeMpBack`/`inactiveMpBack` 调用改写从正则替换改为 AST 精确偏移插入，支持嵌套括号实参与任意表达式位置
 - import 匹配改为全等；调用识别基于 Babel 作用域 binding 校验（callee 必须解析到 helper 的 import specifier），本地同名函数、嵌套作用域遮蔽参数不再被误处理
 - per-page 配置按字段校验字面量类型：`frequency` 仅接受数字、`preventDefault`/`initialValue` 仅接受布尔，类型错误在构建期报错
+- composition 页面 `onPageBack` 第二参数为变量/表达式时构建期报错，不再静默回退全局配置
+- 注入的 beforeleave 处理函数改名为 `__MP_BACK_ON_BEFORE_LEAVE__`，不再与用户自定义的 `onBeforeLeave` 方法/变量冲突
 
 #### 架构改进
 
@@ -27,4 +29,4 @@
 
 - 目录重组至 `src/`，移除 `@babel/generator` 依赖
 - 新增 CI（typecheck + test + build），release 前置 typecheck 与测试
-- 测试从 3 个扩展到 28 个（transform 单元测试、pages.json 解析、options API 三种写法、frequency 语义、binding 遮蔽等）
+- 测试从 3 个扩展到 30 个（transform 单元测试、pages.json 解析、options API 三种写法、frequency 语义、binding 遮蔽、命名冲突等）

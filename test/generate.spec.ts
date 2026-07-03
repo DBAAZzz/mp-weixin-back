@@ -7,6 +7,7 @@ import IndexFrequency from './data/index-frequency.vue'
 import IndexDefault from './data/index-default.vue'
 import IndexDefaultFn from './data/index-default-fn.vue'
 import IndexDefaultObject from './data/index-default-object.vue'
+import IndexDefaultConflict from './data/index-default-conflict.vue'
 
 const flushTimers = () => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -33,10 +34,10 @@ describe('generate page-container components', () => {
       const pageContainerRef = wrapper.find('page-container')
       expect(pageContainerRef.exists()).toBe(true)
       expect((wrapper.vm as any).__MP_BACK_SHOW_PAGE_CONTAINER__).toBe(true)
-      expect(typeof (wrapper.vm as any).onBeforeLeave).toBe('function')
+      expect(typeof (wrapper.vm as any).__MP_BACK_ON_BEFORE_LEAVE__).toBe('function')
 
       // 触发返回：用户回调执行 + 默认放行（navigateBack）
-      ;(wrapper.vm as any).onBeforeLeave()
+      ;(wrapper.vm as any).__MP_BACK_ON_BEFORE_LEAVE__()
       expect(logSpy).toHaveBeenCalledWith('触发了手势返回！')
       expect(navigateBack).toHaveBeenCalledWith({ delta: 1 })
     })
@@ -49,7 +50,7 @@ describe('generate page-container components', () => {
       expect(pageContainerRef.exists()).toBe(true)
       // per-page 配置 initialValue: false
       expect((wrapper.vm as any).__MP_BACK_SHOW_PAGE_CONTAINER__).toBe(false)
-      expect(typeof (wrapper.vm as any).onBeforeLeave).toBe('function')
+      expect(typeof (wrapper.vm as any).__MP_BACK_ON_BEFORE_LEAVE__).toBe('function')
 
       await wrapper.find('#button2').trigger('click')
       await flushTimers()
@@ -68,7 +69,7 @@ describe('generate page-container components', () => {
       await wrapper.vm.$nextTick()
 
       expect(wrapper.find('page-container').exists()).toBe(true)
-      ;(wrapper.vm as any).onBeforeLeave()
+      ;(wrapper.vm as any).__MP_BACK_ON_BEFORE_LEAVE__()
       expect(logSpy).toHaveBeenCalledWith('别名回调触发')
     })
 
@@ -80,18 +81,18 @@ describe('generate page-container components', () => {
       expect(vm.__MP_BACK_SHOW_PAGE_CONTAINER__).toBe(true)
 
       // 第 1 次：计数 1 < 3，重新武装（show 瞬时 false → true）
-      vm.onBeforeLeave()
+      vm.__MP_BACK_ON_BEFORE_LEAVE__()
       expect(vm.__MP_BACK_SHOW_PAGE_CONTAINER__).toBe(false)
       await flushTimers()
       expect(vm.__MP_BACK_SHOW_PAGE_CONTAINER__).toBe(true)
 
       // 第 2 次：计数 2 < 3，仍重新武装
-      vm.onBeforeLeave()
+      vm.__MP_BACK_ON_BEFORE_LEAVE__()
       await flushTimers()
       expect(vm.__MP_BACK_SHOW_PAGE_CONTAINER__).toBe(true)
 
       // 第 3 次：计数 3 < 3 不成立，不再重新武装（后续返回放行）
-      vm.onBeforeLeave()
+      vm.__MP_BACK_ON_BEFORE_LEAVE__()
       expect(vm.__MP_BACK_SHOW_PAGE_CONTAINER__).toBe(true)
 
       expect(logSpy).toHaveBeenCalledWith('frequency 回调触发')
@@ -109,9 +110,9 @@ describe('generate page-container components', () => {
       expect(wrapper.find('page-container').exists()).toBe(true)
       expect(vm.__MP_BACK_SHOW_PAGE_CONTAINER__).toBe(true)
       expect(vm.__MP_BACK_FREQUENCY__).toBe(1)
-      expect(typeof vm.onBeforeLeave).toBe('function')
+      expect(typeof vm.__MP_BACK_ON_BEFORE_LEAVE__).toBe('function')
 
-      vm.onBeforeLeave()
+      vm.__MP_BACK_ON_BEFORE_LEAVE__()
       expect(logSpy).toHaveBeenCalledWith('触发了手势返回！')
       expect(navigateBack).toHaveBeenCalledWith({ delta: 1 })
     })
@@ -124,7 +125,7 @@ describe('generate page-container components', () => {
       expect(wrapper.find('page-container').exists()).toBe(true)
       expect(vm.existing()).toBe('existing')
 
-      vm.onBeforeLeave()
+      vm.__MP_BACK_ON_BEFORE_LEAVE__()
       expect(vm.backCount).toBe(1)
       expect(navigateBack).toHaveBeenCalled()
     })
@@ -136,10 +137,26 @@ describe('generate page-container components', () => {
 
       expect(wrapper.find('page-container').exists()).toBe(true)
 
-      vm.onBeforeLeave()
+      vm.__MP_BACK_ON_BEFORE_LEAVE__()
       expect(vm.backCount).toBe(1)
       // preventDefault: true → 不触发 navigateBack
       expect(navigateBack).not.toHaveBeenCalled()
+    })
+
+    it('用户自定义的 onBeforeLeave 方法与注入的处理函数互不影响', async () => {
+      const wrapper = mount(IndexDefaultConflict)
+      await wrapper.vm.$nextTick()
+      const vm = wrapper.vm as any
+
+      // 注入的处理函数走拦截逻辑（page-container 的 @beforeleave 绑定它）
+      vm.__MP_BACK_ON_BEFORE_LEAVE__()
+      expect(vm.backCount).toBe(1)
+      expect(vm.userCalled).toBe(false)
+      expect(navigateBack).toHaveBeenCalled()
+
+      // 用户自己的 onBeforeLeave 原样保留、可正常调用
+      vm.onBeforeLeave()
+      expect(vm.userCalled).toBe(true)
     })
   })
 })

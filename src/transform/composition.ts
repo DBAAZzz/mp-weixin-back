@@ -4,6 +4,7 @@ import _traverse from '@babel/traverse'
 import type { NodePath } from '@babel/traverse'
 import type { CallExpression, File, ImportDeclaration } from '@babel/types'
 import { virtualFileId } from '../constants'
+import { MpBackConfigError } from '../errors'
 import { extractStaticOptions } from './extract'
 import {
   buildCompositionBeforeLeave,
@@ -68,14 +69,20 @@ export function compositionTransform(
   let optionsFound = false
   for (const call of registerCalls) {
     const optionsArg = call.arguments[1]
-    if (optionsArg?.type === 'ObjectExpression') {
-      if (optionsFound) {
-        context.log.error(`${id}：onPageBack 被多次传入配置，仅第一处生效`)
-        continue
-      }
-      staticOptions = extractStaticOptions(optionsArg, id)
-      optionsFound = true
+    if (!optionsArg) continue
+    // 配置在构建期静态读取：变量/表达式形式无法提取，静默回退全局配置会产生错误行为，必须报错
+    if (optionsArg.type !== 'ObjectExpression') {
+      throw new MpBackConfigError(
+        `${id}：onPageBack 的第二个参数必须是内联对象字面量（配置在构建期静态读取，收到 ${optionsArg.type}）。` +
+          `请写成 onPageBack(cb, { preventDefault: true }) 的形式`
+      )
     }
+    if (optionsFound) {
+      context.log.error(`${id}：onPageBack 被多次传入配置，仅第一处生效`)
+      continue
+    }
+    staticOptions = extractStaticOptions(optionsArg, id)
+    optionsFound = true
   }
 
   const cfg: ResolvedBackConfig = {
