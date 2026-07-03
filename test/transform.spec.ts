@@ -206,6 +206,29 @@ describe('plugin transform', () => {
       expect(result.code).toContain(`console.log('back')`)
     })
 
+    it('data 为函数属性（箭头/function 表达式）时状态注入其返回对象，不插入重复 data 键', async () => {
+      const arrowPage = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nexport default {\n  data: () => ({ a: 1 }),\n  onPageBack() {},\n}\n</script>\n`
+      const arrowResult = await transformWith(arrowPage)
+      expect(arrowResult.code).toContain('__MP_BACK_SHOW_PAGE_CONTAINER__: true, __MP_BACK_FREQUENCY__: 1,')
+      // 不新增 data 方法（否则会被用户靠后的 data: 键覆盖）
+      expect(arrowResult.code).not.toContain('data() {')
+
+      const fnPage = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nexport default {\n  data: function () {\n    return { a: 1 }\n  },\n  onPageBack() {},\n}\n</script>\n`
+      const fnResult = await transformWith(fnPage)
+      expect(fnResult.code).toContain('__MP_BACK_SHOW_PAGE_CONTAINER__: true, __MP_BACK_FREQUENCY__: 1,')
+      expect(fnResult.code).not.toContain('data() {')
+    })
+
+    it('data 存在但无法静态定位返回对象时报错，而不是插入会被覆盖的重复键', async () => {
+      const page = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nexport default {\n  data: () => createData(),\n  onPageBack() {},\n}\n</script>\n`
+      await expect(transformWith(page)).rejects.toThrow(/data 必须是方法或返回对象字面量的函数/)
+    })
+
+    it('methods 存在但不是对象字面量时报错', async () => {
+      const page = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nimport myMethods from './methods'\nexport default {\n  methods: myMethods,\n  onPageBack() {},\n}\n</script>\n`
+      await expect(transformWith(page)).rejects.toThrow(/methods 必须是对象字面量/)
+    })
+
     it('无 data、无 methods 时自动补齐', async () => {
       const code = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nexport default {\n  onPageBack() {},\n}\n</script>\n`
       const result = await transformWith(code)
