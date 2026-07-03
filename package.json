@@ -14,8 +14,8 @@
     "check-publish": "node scripts/check-publish.mjs && pnpm publish --dry-run --no-git-checks",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "pnpm run version && pnpm typecheck && pnpm test:run && pnpm build && pnpm check-publish && pnpm publish --access public --no-git-checks",
-    "release:dry": "pnpm build && pnpm check-publish"
+    "release": "node scripts/release.mjs",
+    "release:dry": "node scripts/release.mjs --dry-run"
   },
   "keywords": [
     "miniprogram",
