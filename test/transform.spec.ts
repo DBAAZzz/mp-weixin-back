@@ -126,6 +126,18 @@ describe('plugin transform', () => {
       await expect(transformWith(page('{ initialValue: 0 }'))).rejects.toThrow(/initialValue 必须是布尔字面量/)
     })
 
+    it('第二个参数为变量/表达式时给出构建错误，而不是静默回退全局配置', async () => {
+      const viaVariable = setupPage(
+        `import onPageBack from 'mp-weixin-back-helper'\nconst opts = { preventDefault: true }\nonPageBack(() => {}, opts)`
+      )
+      await expect(transformWith(viaVariable)).rejects.toThrow(/内联对象字面量/)
+
+      const viaExpression = setupPage(
+        `import onPageBack from 'mp-weixin-back-helper'\nonPageBack(() => {}, getOpts())`
+      )
+      await expect(transformWith(viaExpression)).rejects.toThrow(/内联对象字面量/)
+    })
+
     it('嵌套作用域中被遮蔽的同名标识符不被改写（binding 校验）', async () => {
       const code = setupPage(
         [
@@ -198,7 +210,7 @@ describe('plugin transform', () => {
       const code = `<template>\n  <div>页面</div>\n</template>\n\n<script>\nexport default {\n  onPageBack() {},\n}\n</script>\n`
       const result = await transformWith(code)
       expect(result.code).toContain('data() {')
-      expect(result.code).toContain('onBeforeLeave()')
+      expect(result.code).toContain('__MP_BACK_ON_BEFORE_LEAVE__()')
     })
   })
 })

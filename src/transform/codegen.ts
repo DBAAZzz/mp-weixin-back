@@ -3,6 +3,7 @@ import { parse } from '@babel/parser'
 import _traverse from '@babel/traverse'
 import type { File } from '@babel/types'
 import { MpBackConfigError } from '../errors'
+import { BEFORE_LEAVE_HANDLER } from '../constants'
 import type { PageContext } from '../context'
 import type { PageContainerOptions, ResolvedBackConfig, SfcBlock } from '../types'
 
@@ -19,7 +20,7 @@ export function buildPageContainerTag(options: PageContainerOptions = {}): strin
   const pc = { ...DEFAULT_PAGE_CONTAINER, ...options }
   return (
     `<page-container :show="__MP_BACK_SHOW_PAGE_CONTAINER__" :overlay="${pc.overlay}" ` +
-    `@beforeleave="onBeforeLeave" :z-index="${pc.zIndex}" :duration="${pc.duration}"></page-container>`
+    `@beforeleave="${BEFORE_LEAVE_HANDLER}" :z-index="${pc.zIndex}" :duration="${pc.duration}"></page-container>`
   )
 }
 
@@ -29,11 +30,11 @@ export function injectPageContainer(ms: MagicString, template: SfcBlock, tag: st
 }
 
 /**
- * composition API 页面的 onBeforeLeave 声明。
+ * composition API 页面的 beforeleave 处理函数声明。
  * 用户回调通过 __MP_BACK_REGISTER__ 注册（保持用户代码原位，不做 AST 重组）。
  */
 export function buildCompositionBeforeLeave(cfg: ResolvedBackConfig, globalHookCode: string): string {
-  return `const onBeforeLeave = () => {
+  return `const ${BEFORE_LEAVE_HANDLER} = () => {
   if (!__MP_BACK_SHOW_PAGE_CONTAINER__.value) return
   if (__MP_BACK_FREQUENCY__ < ${cfg.frequency}) {
     __MP_BACK_SHOW_PAGE_CONTAINER__.value = false
@@ -47,12 +48,12 @@ export function buildCompositionBeforeLeave(cfg: ResolvedBackConfig, globalHookC
 }
 
 /**
- * options API 页面注入 methods 的 onBeforeLeave 方法。
+ * options API 页面注入 methods 的 beforeleave 处理方法。
  * 用户的 onPageBack 选项保持原位，运行时经 $options 调用，
  * 同时支持函数写法和 { handler, ...options } 对象写法。
  */
 export function buildOptionsBeforeLeaveMethod(cfg: ResolvedBackConfig, globalHookCode: string): string {
-  return `onBeforeLeave() {
+  return `${BEFORE_LEAVE_HANDLER}() {
     if (!this.__MP_BACK_SHOW_PAGE_CONTAINER__) return
     if (this.__MP_BACK_FREQUENCY__ < ${cfg.frequency}) {
       this.__MP_BACK_SHOW_PAGE_CONTAINER__ = false
