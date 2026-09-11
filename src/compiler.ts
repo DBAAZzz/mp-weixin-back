@@ -113,12 +113,17 @@ export async function resolveCompiler(root: string): Promise<typeof import('@vue
       if (error instanceof MpBackEnvironmentError) throw error
 
       try {
-        // 降级尝试直接 import。校验仍要**从 compiler-sfc 自己的位置**出发解析
-        // @vue/shared，不能传 root —— pnpm 严格布局下 @vue/shared 不会被提升到
+        // 降级尝试从插件自身位置加载。校验仍要**从 compiler-sfc 自己的位置**出发
+        // 解析 @vue/shared，不能传 root —— pnpm 严格布局下 @vue/shared 不会被提升到
         // 项目根，传 root 会解析失败、走进 assertSharedCompat 的 catch 静默返回，
         // 于是「唯一会失败」的场景反而跳过校验（曾经踩过，CR 复现）。
-        // 因此先 resolve 出 compiler-sfc 的真实入口再校验；resolve 不到就退回本
-        // 文件位置（插件自己的依赖树），至少有据可查。
+        //
+        // ⚠️ 解析、校验、加载必须走**同一套机制**（都用 CJS _require）：@vue/shared
+        // 的 exports map 给 `require` 和 `import` 指了不同的文件
+        // （require → index.js→dist/shared.cjs.js，import → dist/shared.esm-bundler.js）。
+        // 若用 CJS 校验、却用 ESM import() 加载，两者理论上可以落到不同的包副本上，
+        // 校验的就不是真正被 parse() 用的那一份（CR 指出，实测当前布局未触发）。
+        // 统一成 _require 后这个差异不存在了。
         let from: string
         try {
           from = _require.resolve('@vue/compiler-sfc', { paths: [root] })
@@ -126,7 +131,7 @@ export async function resolveCompiler(root: string): Promise<typeof import('@vue
           from = _require.resolve('@vue/compiler-sfc')
         }
         assertSharedCompat(_require, from)
-        const compiler = await import('@vue/compiler-sfc')
+        const compiler = _require(from) as typeof import('@vue/compiler-sfc')
         return compiler
       } catch (secondary) {
         if (secondary instanceof MpBackEnvironmentError) throw secondary

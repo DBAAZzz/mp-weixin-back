@@ -92,12 +92,18 @@ function makeFixture(): string {
 
     const pkgJson = JSON.parse(
       fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')
-    ) as { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }
-    // 依赖 + peer 依赖都带上：compiler-sfc 的 peer（@vue/compiler-core 等）多数
-    // 同时也在 dependencies 里，但显式带上更稳。optional 的不强求。
+    ) as {
+      dependencies?: Record<string, string>
+      peerDependencies?: Record<string, string>
+      optionalDependencies?: Record<string, string>
+    }
+    // dependencies + peer + optional 都带上。peer 在 compiler-sfc 这类包里多数同时
+    // 也在 dependencies 里，显式带上更稳；optional 若被实际用到而漏搬，夹具加载会
+    // 失败 —— 下面的自检会立刻抛错，不会静默跑成一条假路径。
     for (const dep of Object.keys({
       ...pkgJson.dependencies,
       ...pkgJson.peerDependencies,
+      ...pkgJson.optionalDependencies,
     })) {
       queue.push({ name: dep, fromDir: pkgDir })
     }
@@ -272,5 +278,38 @@ describe('resolveCompiler 环境校验', () => {
     // 也不该被它干扰 —— 因为校验起点是 compiler-sfc 自己的入口。
     const compiler = await resolveCompiler(root)
     expect(typeof compiler.parse).toBe('function')
+  })
+
+  /**
+   * 解析、校验、加载必须走**同一套机制**（都用 CJS _require）。
+   *
+   * 为什么这条值得钉：`@vue/shared` 的 exports map 给 require 和 import 指了不同文件
+   *   - require → ./index.js      → dist/shared.cjs.js
+   *   - import  → ./dist/shared.esm-bundler.js
+   * 如果实现改成「用 CJS 校验、用 ESM import() 加载」，两者可以落到**不同的包副本**上，
+   * 校验的就不是 parse() 真正会用到的那一份 —— 校验通过、运行时照旧炸。
+   * 这是 CR（T-d66a41）指出的结构性风险，此处把前提固化下来。
+   */
+  it('@vue/shared 的 require 与 import 入口确实指向不同文件（解释为何必须统一机制）', async () => {
+    const fromDir = path.dirname(_require.resolve('@vue/compiler-sfc'))
+    const sharedEntry = _require.resolve('@vue/shared', { paths: [fromDir] })
+    // resolve 给的是入口文件，向上找到包根（含 package.json 的那层）
+    let pkgDir = path.dirname(sharedEntry)
+    while (!fs.existsSync(path.join(pkgDir, 'package.json'))) pkgDir = path.dirname(pkgDir)
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')) as {
+      exports?: Record<string, Record<string, string> | string>
+    }
+    const entry = pkg.exports?.['.']
+    // 只要上游仍给 import/require 分设入口，就必须统一解析机制
+    expect(typeof entry).toBe('object')
+    const cond = entry as Record<string, string>
+    expect(cond.require).toBeTruthy()
+    expect(cond.import).toBeTruthy()
+    expect(cond.require).not.toBe(cond.import)
+
+    // 且被校验的那份（require 入口）确实带 genCacheKey —— 否则校验形同虚设
+    const required = _require(sharedEntry) as { genCacheKey?: unknown }
+    expect(typeof required.genCacheKey).toBe('function')
   })
 })
