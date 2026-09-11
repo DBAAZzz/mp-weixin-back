@@ -289,6 +289,11 @@ describe('resolveCompiler 环境校验', () => {
    * 这里用同一个 root 跑两次：第一次是坏树（版本错配）→ 失败；随后把坏树修好，
    * 第二次必须成功。两次之间不换 root —— 若实现按 root 缓存了失败结果，第二次
    * 仍会拿到旧的 rejected，这条就会红。
+   *
+   * ⚠️ 光断言「第二次不抛」是不够的（CR T-617811 的反例）：只要失效化块被删掉，
+   * 陈旧路径仍会从 `require.cache` 命中那份缺 genCacheKey 的旧模块 → 校验照旧
+   * 报错，而删掉整块后路径虽然死了、`require.cache` 里的旧模块也让这一步「不抛」。
+   * 所以必须断言**真正拿到了健康 shared 的形参**，而不只是「没抛」。
    */
   it('首次失败后修好依赖：同一 root 重试必须成功（失败不被缓存）', async () => {
     const root = makeFixture()
@@ -310,6 +315,49 @@ describe('resolveCompiler 环境校验', () => {
 
     const compiler = await resolveCompiler(root)
     expect(typeof compiler.parse, '修好之后必须能拿到 compiler，而不是旧的 rejected').toBe('function')
+
+    // 决定性断言：修复后解析到的 shared 必须是**磁盘上那份健康的**，而不是内存里
+    // 那份缺 genCacheKey 的旧模块。少了这一条，「删掉整块失效化」也能全绿。
+    const fromDir = path.dirname(path.join(root, 'node_modules', '@vue', 'compiler-sfc', 'index.js'))
+    const sharedPath = _require.resolve('@vue/shared', { paths: [fromDir] })
+    expect(
+      sharedPath.replace(/\\/g, '/'),
+      '修复后不能再解析到那条已被删除的旧 shared —— 这正是只删 require.cache 时的手感'
+    ).not.toContain('compiler-sfc/node_modules')
+    expect(
+      typeof (_require(sharedPath) as { genCacheKey?: unknown }).genCacheKey,
+      '必须拿到带 genCacheKey 的健康 shared —— 这才是「修好了」'
+    ).toBe('function')
+  })
+
+  /**
+   * 覆盖「文件还在、路径不变，但内容被换成新版」——CR T-617811 指出的漏网场景。
+   *
+   * 这条路径不会进入 `!fs.existsSync` 分支，所以任何「按磁盘存在性决定是否作废解析」
+   * 的写法都挡不住它：解析结果陈旧 → 从 `require.cache` 取回旧模块 → 磁盘上明明
+   * 已经修好了，插件却继续报版本不匹配，用户按报错里的指引操作也不管用。
+   */
+  it('旧 shared 被原地替换成新版（路径不变）：重试必须放行，不能报陈旧的版本不匹配', async () => {
+    const root = makeFixture()
+    writeLegacyShared(root)
+    const resolveCompiler = await loadResolveCompiler('inplace')
+
+    const first = await resolveCompiler(root).then(
+      () => null,
+      (e: unknown) => e as Error
+    )
+    expect(first, '坏树必须失败').not.toBeNull()
+
+    // 用户按报错指引修好：**同一个路径**原地覆盖成带 genCacheKey 的新版
+    writeLegacyShared(root, '3.5.28')
+    const legacyDir = path.join(root, 'node_modules', '@vue', 'compiler-sfc', 'node_modules', '@vue', 'shared')
+    fs.writeFileSync(
+      path.join(legacyDir, 'index.js'),
+      `module.exports = { extend: Object.assign, isArray: Array.isArray, genCacheKey: () => 'k' }\n`
+    )
+
+    const compiler = await resolveCompiler(root)
+    expect(typeof compiler.parse).toBe('function')
   })
 
   /**

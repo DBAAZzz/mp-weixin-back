@@ -35,6 +35,38 @@ function readPackageVersion(entryPath: string): string | null {
 }
 
 /**
+ * 作废 Node 对某个 specifier 的**解析记忆**，让下一次 `require.resolve` 重新走文件系统。
+ *
+ * 要删的是 `Module._pathCache`，不是 `require.cache`——后者是模块实例缓存，与解析结果
+ * 无关。删除后重新 resolve 仍可能返回那条已删除的路径，此时必须靠这一层把解析结果换掉。
+ * 键形如 `specifier\0paths[0]\0nodeModulePaths.join('\0')`（见 `Module._resolveFilename`），
+ * 以 `specifier + '\0'` 开头即可精确匹配到本 specifier 的全部起点。
+ *
+ * `_pathCache` 是 Node 私有 API：取不到就安静放弃（解析结果可能与磁盘不符，由调用方
+ * 按 existsSync 兜底），不值得让构建挂掉。
+ */
+function invalidateResolveCache(specifier: string, fromDir: string): void {
+  try {
+    const pathCache = (module.constructor as unknown as { _pathCache?: Record<string, string> })
+      ._pathCache
+    if (!pathCache) return
+    const prefix = `${specifier}\0`
+    const nodeModulesPaths = (module.constructor as unknown as {
+      _nodeModulePaths?: (from: string) => string[]
+    })._nodeModulePaths?.(fromDir)
+    const suffix = nodeModulesPaths ? `\0${nodeModulesPaths.join('\0')}` : null
+    for (const key of Object.keys(pathCache)) {
+      if (!key.startsWith(prefix)) continue
+      // 能精确到本起点就精确匹配（避免误删其它目录的解析结果，它们仍然有效）；
+      // 取不到 nodeModulePaths 时退回按 specifier 全删，宁可多删不可漏删。
+      if (suffix === null || key.endsWith(suffix)) delete pathCache[key]
+    }
+  } catch {
+    // 私有 API 不可用时放弃作废，调用方会按 existsSync 兜底
+  }
+}
+
+/**
  * 校验 `@vue/compiler-sfc` 实际加载到的 `@vue/shared` 是否带 `genCacheKey`。
  *
  * 背景：`@vue/compiler-sfc@3.5.9+` 的 `parse()` 内部改成调用
@@ -68,20 +100,32 @@ export function assertSharedCompat(_require: NodeRequire, from: string): void {
     return
   }
 
-  // Node 的 require 会记住「这个 specifier 从这儿解析到了这个路径」，且**不校验
-  // 文件是否还在**：用户在 watch 会话里删掉那个被提升/重复安装的旧 shared 之后，
-  // resolve 仍会返回已删除的路径，加载拿到的还是内存里那份旧模块（实测：删完
-  // 文件、resolve 仍返回旧路径、genCacheKey 仍缺失）。于是「修好了依赖」这个
-  // 场景反而被陈旧的解析缓存挡住，用户只能重启 dev server。这里按磁盘状态作废
-  // 掉那条缓存，让下一次 resolve 重新走真实查找。
+  // 失效化要覆盖两种「用户修好了依赖」的形态，它们卡在不同的缓存上：
+  //   ① 删掉了那份重复安装的旧 shared → 需要让**解析**重来（Module._pathCache）
+  //   ② 原地覆盖成新版（路径不变）    → 路径仍有效，但**模块实例**是旧的，需要让加载重来
+  // 两种都要接住：watch 会话里用户按报错指引修依赖，下一次就能拿到修正后的事实。
+  //
+  // （注：`_findPath` 本身每次都会重新 stat，所以 ① 在多数情况下重新 resolve 也能
+  //  得到正确结果；`_pathCache` 这一层是为了兜住它返回陈旧路径的情形。）
   if (!fs.existsSync(sharedPath)) {
-    delete (_require as NodeRequire & { cache: NodeJS.Dict<NodeModule> }).cache[sharedPath]
+    invalidateResolveCache('@vue/shared', baseDir)
     try {
       sharedPath = _require.resolve('@vue/shared', { paths: [baseDir] })
     } catch {
       return
     }
+    // 作废后仍解析到不存在的路径：说明磁盘上确实没有可用的 shared 了（依赖真缺），
+    // 这属于「没装」而非「版本错配」，交给后续实际调用暴露，不要报一个自相矛盾的
+    // 版本不匹配（两个版本号会显示成同一个）。
+    if (!fs.existsSync(sharedPath)) return
   }
+
+  // 校验是一次性动作（通过就 return），这里每次都让模块实例缓存失效，以拿到磁盘上的
+  // 真实状态。代价只是丢弃一份可以随时重载的纯函数模块，远小于「报着已经修好的错误、
+  // 把用户困在死循环里」——那正是 ② 这个场景会让用户撞上的。
+  //
+  // 放在 if 之外是刻意的：② 的路径没变，永远进不了 if，只在 if 里删就漏掉了它。
+  delete (_require as NodeRequire & { cache: NodeJS.Dict<NodeModule> }).cache[sharedPath]
 
   let shared: { genCacheKey?: unknown }
   try {
@@ -151,7 +195,22 @@ export async function resolveCompiler(root: string): Promise<typeof import('@vue
     // 不校验（曾经踩过，CR 复现）。
     assertSharedCompat(_require, compilerPath)
 
-    const compiler = _require(compilerPath) as typeof import('@vue/compiler-sfc')
+    let compiler: typeof import('@vue/compiler-sfc')
+    try {
+      compiler = _require(compilerPath) as typeof import('@vue/compiler-sfc')
+    } catch (error) {
+      // 「能 resolve、但加载抛错」= 装坏了（半截安装、原生模块失败、文件被删…）。
+      // 不兜底、也不让原始错误直接冒泡：冒泡出来的是 `dlopen failed` 这类与插件
+      // 无关的信息，用户不知道是自己项目里那份依赖坏了、更不知道要怎么办。
+      // 补一层可操作报错，并保留原始错误便于定位。
+      throw new MpBackEnvironmentError(
+        `[mp-weixin-back] 解析到了 @vue/compiler-sfc 但加载失败，通常是依赖装坏了。\n` +
+          `  路径：${compilerPath}\n` +
+          `  原因：${(error as Error).message}\n` +
+          `修复方式：删掉 node_modules 与 lockfile 后重装，或重装该依赖：\n` +
+          `  pnpm add -D @vue/compiler-sfc`
+      )
+    }
     compilerCache = { root, compiler }
     return compiler
   }
