@@ -28,25 +28,28 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      # v7/v6：旧版 action 跑在 Node 20 上，已被 GitHub 强制升到 Node 24 并告警
+      - uses: actions/checkout@v7
         with:
           # 需要完整历史：下面会校验「本 commit 的版本号是否已在 npm 上」并 push
           # 回 main。浅克隆会让 push 与 diff 判定出错。
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.33.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           registry-url: https://registry.npmjs.org
           cache: pnpm
 
-      # 早失败：没有 token 时让这一步就炸，而不是拖到 publish 才报
-      # 一个不说明原因的 E401。
-      - name: Verify NPM_TOKEN is configured
+      # 早失败：token 缺失或失效时让这一步就炸，而不是拖到 publish 才报。
+      # 注意 npm 对无效认证的 publish 会回一个伪装成「包不存在」的 404（避免
+      # 泄露包是否存在），日志极难排查 —— 所以必须在这里先验证 token 本身。
+      # 另：npm 已于 2025-12-09 永久吊销全部 classic token，旧 token 失效先想到这个。
+      - name: Verify NPM_TOKEN is configured and valid
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -55,7 +58,14 @@ jobs:
             echo "发布需要它来向 npm 认证。"
             exit 1
           fi
-          echo "NPM_TOKEN 已配置（长度 ${#NODE_AUTH_TOKEN}）"
+          ACCOUNT=$(npm whoami --registry https://registry.npmjs.org 2>/dev/null) || {
+            echo "::error::NPM_TOKEN 无效或已过期（npm whoami 认证未通过）。"
+            echo "npm 已于 2025-12-09 永久吊销全部 classic token。请到 npmjs.com 生成"
+            echo "granular access token（对 mp-weixin-back 勾选 Read and write），"
+            echo "然后更新仓库 secret NPM_TOKEN（Settings → Secrets and variables → Actions）。"
+            exit 1
+          }
+          echo "NPM_TOKEN 有效（账号 ${ACCOUNT}）"
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
