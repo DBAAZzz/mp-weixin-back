@@ -77,10 +77,16 @@ export function assertSharedCompat(_require: NodeRequire, from: string): void {
       `compiler-sfc 3.5.9+ 的 parse() 依赖 @vue/shared 的 genCacheKey，` +
       `版本过旧时会在解析 SFC 时抛 TypeError。\n` +
       `通常是因为包管理器提升/扁平化了依赖。修复方式（任选其一）：\n` +
-      `  - 对齐版本：pnpm add -D @vue/shared@${compilerVersion}\n` +
-      `  - pnpm 用户可强制对齐：在 package.json 加 ` +
-      `"pnpm": { "overrides": { "@vue/shared": "${compilerVersion}" } }\n` +
-      `  - 重新生成 lockfile：rm -rf node_modules pnpm-lock.yaml && pnpm install`
+      `  - 对齐版本：\n` +
+      `      pnpm add -D @vue/shared@${compilerVersion}\n` +
+      `      npm  install --save-dev @vue/shared@${compilerVersion}\n` +
+      `      yarn add -D @vue/shared@${compilerVersion}\n` +
+      `  - 强制对齐（在 package.json 里按你的包管理器选一个字段）：\n` +
+      `      pnpm → "pnpm":       { "overrides":   { "@vue/shared": "${compilerVersion}" } }\n` +
+      `      npm  → "overrides":  { "@vue/shared": "${compilerVersion}" }\n` +
+      `      yarn → "resolutions":{ "@vue/shared": "${compilerVersion}" }\n` +
+      `  - 重新安装：删掉 node_modules 与 lockfile 后重装\n` +
+      `      （lockfile 按包管理器为 pnpm-lock.yaml / package-lock.json / yarn.lock）`
   )
 }
 

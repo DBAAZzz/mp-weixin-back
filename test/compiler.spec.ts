@@ -38,37 +38,17 @@ const _require = createRequire(import.meta.url)
 const repoRoot = path.resolve(__dirname, '..')
 
 /**
- * 把 srcDir 下的条目摊平复制进 dstDir（npm 扁平化后的形态）。
- *
- * 必须复制**整棵依赖闭包**：compiler-sfc 的入口在 dist/ 下，但它 require 的
- * @vue/compiler-core / postcss / entities 等在包外（依赖树里）。只复制包自己的
- * dist 会让 require 直接抛 MODULE_NOT_FOUND，掉进 resolveCompiler 的「装不上」
- * 分支，就测不到我们真正要测的版本校验了。
- */
-function copyFlat(srcDir: string, dstDir: string): void {
-  for (const entry of fs.readdirSync(srcDir)) {
-    if (entry.startsWith('.')) continue
-    const src = path.join(srcDir, entry)
-    const dst = path.join(dstDir, entry)
-    if (entry.startsWith('@')) {
-      fs.mkdirSync(dst, { recursive: true })
-      for (const sub of fs.readdirSync(src)) {
-        if (fs.existsSync(path.join(dst, sub))) continue
-        fs.cpSync(fs.realpathSync(path.join(src, sub)), path.join(dst, sub), { recursive: true })
-      }
-    } else if (!fs.existsSync(dst)) {
-      fs.cpSync(fs.realpathSync(src), dst, { recursive: true })
-    }
-  }
-}
-
-/**
  * 造一棵仓库外的自洽依赖树：以仓库当前装的 @vue/compiler-sfc 为起点，把它整棵
- * 依赖闭包（@vue/compiler-core、postcss、entities…）从 .pnpm 里摊平复制出来，
- * 模拟 npm 扁平化 / HBuilderX 那种 node_modules 形态。
+ * 依赖闭包（@vue/compiler-core、postcss、entities…）摊平复制出来，模拟 npm
+ * 扁平化 / HBuilderX 那种 node_modules 形态。
  *
  * 放在**仓库外**是必须的：放在仓库内时，Node 会从 fixture 一路向上走回仓库的
  * node_modules，命中仓库里那份正确的 @vue/shared，错配就复现不出来了。
+ *
+ * 依赖闭包的发现方式是**顺着真实解析结果走**（resolve 每个依赖 → 拿到它的包目录
+ * → 读它的 dependencies 继续），而不是去猜 pnpm 的目录命名（`@scope+name@ver`
+ * 是 .pnpm 的实现细节，pnpm 改版就会失效）。这样 npm / yarn / pnpm 各种布局
+ * 都成立，也不依赖 lockfile 的形态。
  */
 function makeFixture(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-back-compiler-'))
@@ -76,35 +56,66 @@ function makeFixture(): string {
   const flat = path.join(root, 'node_modules')
   fs.mkdirSync(flat, { recursive: true })
 
-  const pnpmDir = path.join(repoRoot, 'node_modules', '.pnpm')
-  // .pnpm 里的包目录名形如 @vue+compiler-sfc@3.5.28
-  const sfcKey = fs
-    .readdirSync(pnpmDir)
-    .find((d) =>
-      fs.existsSync(path.join(pnpmDir, d, 'node_modules', '@vue', 'compiler-sfc'))
-    )!
-
-  // BFS 整棵依赖闭包，逐层摊平复制
-  const queue = [sfcKey]
-  const visited = new Set<string>()
-  while (queue.length) {
-    const key = queue.shift()!
-    if (visited.has(key)) continue
-    visited.add(key)
-    const pkgModules = path.join(pnpmDir, key, 'node_modules')
-    if (!fs.existsSync(pkgModules)) continue
-    copyFlat(pkgModules, flat)
-    for (const entry of fs.readdirSync(pkgModules)) {
-      if (entry.startsWith('.')) continue
-      const names = entry.startsWith('@')
-        ? fs.readdirSync(path.join(pkgModules, entry)).map((s) => `${entry}+${s}`)
-        : [entry]
-      for (const name of names) {
-        for (const cand of fs.readdirSync(pnpmDir)) {
-          if (cand === name || cand.startsWith(`${name}@`)) queue.push(cand)
-        }
+  /** 从某个目录出发解析 specifier，返回其包根（含 package.json 的那一层） */
+  const resolvePkgDir = (specifier: string, fromDir: string): string | null => {
+    try {
+      let dir = path.dirname(_require.resolve(specifier, { paths: [fromDir] }))
+      while (!fs.existsSync(path.join(dir, 'package.json'))) {
+        const parent = path.dirname(dir)
+        if (parent === dir) return null
+        dir = parent
       }
+      return dir
+    } catch {
+      return null
     }
+  }
+
+  // BFS：从 compiler-sfc 出发，把每个包连同它的 dependencies 一起搬进 fixture
+  const seen = new Set<string>()
+  const queue: Array<{ name: string; fromDir: string }> = [
+    { name: '@vue/compiler-sfc', fromDir: repoRoot },
+  ]
+  while (queue.length) {
+    const { name, fromDir } = queue.shift()!
+    if (seen.has(name)) continue
+    seen.add(name)
+
+    const pkgDir = resolvePkgDir(name, fromDir)
+    if (!pkgDir) continue
+    // 搬到 fixture 的 node_modules 下（保持 @scope/name 结构）
+    const dest = path.join(flat, name)
+    if (!fs.existsSync(dest)) {
+      fs.mkdirSync(path.dirname(dest), { recursive: true })
+      fs.cpSync(fs.realpathSync(pkgDir), dest, { recursive: true })
+    }
+
+    const pkgJson = JSON.parse(
+      fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')
+    ) as { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }
+    // 依赖 + peer 依赖都带上：compiler-sfc 的 peer（@vue/compiler-core 等）多数
+    // 同时也在 dependencies 里，但显式带上更稳。optional 的不强求。
+    for (const dep of Object.keys({
+      ...pkgJson.dependencies,
+      ...pkgJson.peerDependencies,
+    })) {
+      queue.push({ name: dep, fromDir: pkgDir })
+    }
+  }
+
+  // 自检：fixture 里的 compiler-sfc 必须能被完整加载。加载不了会让
+  // resolveCompiler 掉进「装不上」分支，于是所有断言都在测另一条路 —— 那种
+  // 「测试还绿着、其实什么都没测」的失败模式最难发现，所以这里直接炸掉。
+  const fixtureCompilerPath = path.join(flat, '@vue', 'compiler-sfc')
+  if (!fs.existsSync(fixtureCompilerPath)) {
+    throw new Error('fixture 构造失败：没搬进 @vue/compiler-sfc，依赖闭包解析有问题')
+  }
+  try {
+    _require(_require.resolve('@vue/compiler-sfc', { paths: [root] }))
+  } catch (e) {
+    throw new Error(
+      `fixture 构造失败：@vue/compiler-sfc 无法加载（依赖闭包不完整，测试会失真）：${(e as Error).message}`
+    )
   }
   return root
 }
