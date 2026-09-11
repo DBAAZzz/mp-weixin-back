@@ -149,6 +149,45 @@ The virtual module `mp-weixin-back-helper` is resolved by the plugin and provide
 - Works with **Vite 3–6**
 - Only applies to page-level `.vue` files, not components
 
+## Verifying the plugin works
+
+The plugin is a pure build-time transform, so verification has four layers (see the README's
+"如何验证插件是否生效" section for details):
+
+1. Build logs — set `debug: true`; the terminal prints pages.json loading and per-page skip reasons
+2. Transform output — browser via `vite-plugin-inspect`, or grep the mp-weixin `dist` output
+3. Runtime — gesture/navbar back in the WeChat miniprogram; a page skipped by the plugin usually
+   leaves the console silent, so judge by the debug logs (layer 1), not by console warnings
+4. Automated tests — two complementary suites, both required after plugin changes:
+   - `pnpm test:run` (40 cases): calls plugin functions directly with stubs, covers branch implementations
+   - `pnpm example:web:test` (10 cases): boots a real Vite dev server via the programmatic API and runs
+     `transformRequest`, covering plugin mounting in the Vite pipeline plus real pages.json gating
+
+The repo ships an `example/` directory with two complementary projects, both loading the plugin
+from source by default (`MP_BACK_USE_DIST=1` switches to `dist/`):
+
+- `example/web` — plain Vite + Vue 3, nine demo pages covering the injection and skip branches.
+  `cd example/web && pnpm install && pnpm dev`, then open `http://localhost:5173/__inspect`.
+- `example/uni` — uni-app + Vue 3, two demo pages plus a step-by-step manual checklist for the
+  WeChat DevTools. `cd example/uni && pnpm install && pnpm build`, then import
+  `example/uni/dist/build/mp-weixin`. This is the only place real interception semantics can be
+  verified. It has no automated tests — that layer needs the WeChat runtime.
+
+Both share one plugin config, `example/shared-options.ts`, so the two sides can't drift.
+
+The web project's README page matrix is machine-checked by `example/web/test/transform.spec.ts`;
+that spec deliberately does not reuse `example/web/vite.config.ts` (it pins its own inline plugin
+config and omits `vite-plugin-inspect`, whose `configureServer` throws under middlewareMode). Root
+`pnpm typecheck` excludes `example/` on purpose — root `tsconfig.json` has no `include` and would
+otherwise fail on the examples' Vite/DOM-typed files.
+
+Gotchas specific to `example/uni` (all documented in its README): its `package.json` needs
+`"type": "module"` because uni's CLI otherwise bundles `vite.config.ts` as CJS, which forbids the
+top-level `await import` used to pick the plugin source; `@dcloudio/vite-plugin-uni` is CJS so the
+default export needs an interop fallback; pages must `import onPageBack from 'mp-weixin-back-helper'`
+(default export — there is no named `onPageBack` export), and that bare specifier must NOT get a
+`resolve.alias`, since an alias would preempt the plugin's `resolveId` for its virtual module.
+
 ## Repository
 
 https://github.com/DBAAZzz/mp-weixin-back

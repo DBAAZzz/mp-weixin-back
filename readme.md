@@ -246,6 +246,96 @@ onPageBack(
 /// <reference types="mp-weixin-back/client" />
 ```
 
+## 🔍 如何验证插件是否生效
+
+插件是**纯构建期转换**，所以验证分四层，从快到慢：
+
+### ① 构建期日志（最快）
+
+开 `debug: true` 后跑 dev，终端会打印 `pages.json` 加载结果与每个页面的**跳过原因**：
+
+```
+[mp-weixin-back] : 已加载 8 个页面（src/pages.json）
+[mp-weixin-back] : src/pages/existing/index.vue 页面已有 page-container 组件，跳过注入
+[mp-weixin-back] : src/pages/unregistered/index.vue 不是 pages.json 中注册的页面，跳过注入
+```
+
+没看到任何相关日志，说明该页面在解析 AST 之前就被跳过了（没 import helper、也没写 `onPageBack` 选项）——这是正常的，不代表出错。
+
+### ② 转换产物
+
+仓库内 `example/` 下有两个**互补**的验证工程，都默认直接加载插件源码（免构建）：
+
+| 目录 | 形态 | 验证什么 |
+| --- | --- | --- |
+| [`example/web`](./example/web/README.md) | 纯 Vite + Vue3 | 用 `vite-plugin-inspect` 在浏览器里看**每个页面的转换产物** |
+| [`example/uni`](./example/uni/README.md) | uni-app + Vue3 | 在**微信开发者工具**里验证**真实拦截效果**（这是第 ③ 层唯一能测的地方） |
+
+**web 端**：
+
+```bash
+cd example/web && pnpm install && pnpm dev
+# 打开 http://localhost:5173/__inspect
+```
+
+它包含 9 个 demo 页面，逐一覆盖注入与跳过分支（composition / options 三种写法 / 分包 / 全局钩子 / 已有 page-container / 未注册页面…），每个页面的「预期产物」都以表格列在 [`example/web/README.md`](./example/web/README.md)。
+
+那张表不是散文，有机器保障：
+
+```bash
+pnpm example:web:test    # = pnpm --dir example/web test，10 个用例
+```
+
+它用 Vite 的**编程式 API** 起一个真实 dev server（`configFile: false` + 内联插件）走
+`transformRequest`，因此同时覆盖「插件被正确挂进 Vite 管线」与「真实 `pages.json`
+页面门控放行/拦截」——这两点是仓库根 `test/*.spec.ts` 覆盖不到的（那里直接调插件函数）。
+
+**小程序端**：用 [`example/uni`](./example/uni/README.md) 构建后，在产物里 grep：
+
+```bash
+grep -o "page-container\|beforeleave" example/uni/dist/build/mp-weixin/pages/*/index.wxml
+```
+
+> ⚠️ 产物是**压缩过**的，`__MP_BACK_ON_BEFORE_LEAVE__` 这类标识符会被重命名，grep 不到。
+> 要看行为性证据（`page-container` / `bindbeforeleave` / `navigateBack`），
+> 且注意 `uni.navigateBack` 在产物里是 `e.index.navigateBack`。详见
+> [`example/uni/README.md`](./example/uni/README.md) 的「产物侧对照」。
+
+### ③ 运行时
+
+现成的工程是 [`example/uni`](./example/uni/README.md)：uni-app + Vue3，两个 demo 页面
+（一个走全局配置、一个 `preventDefault: true` + `frequency: 3`），README 里有一张
+**逐条可执行的验证清单**（手势返回几次、每步预期看到什么）。
+
+```bash
+cd example/uni && pnpm install && pnpm build
+# 微信开发者工具导入 example/uni/dist/build/mp-weixin
+```
+
+- 小程序里手势返回、点导航栏返回，看回调是否触发、`preventDefault` / `frequency` 是否符合预期
+- 判据是**「页面有没有真的停住 / 放行」**，不要只看 console 日志 ——
+  日志只能证明回调被调用，证明不了放行行为正确
+- 需要留意一个容易误判的点：**页面被插件跳过时，console 通常是安静的**。虚拟模块确实内置了
+  `[mp-weixin-back] … 未生效：该文件未被插件编译处理…` 警告，但它只在页面
+  import 了 helper、调用未被改写、且代码被实际执行到该导出时才可能触发。
+  被页面门控跳过（用了 helper 但没注册进 `pages.json`）的页面会保留原样调用，
+  因而不会触发警告。**判断页面是否被处理，请以终端 debug 日志为准**（见 ①），
+  不要以 console 是否有警告为准。
+
+### ④ 自动化测试
+
+两个套件互补，改动插件后都应当跑：
+
+```bash
+pnpm test:run        # 40 个用例：直接调插件函数、自带桩代码，覆盖各分支实现
+pnpm example:web:test  # 10 个用例：真实 Vite 管线 + 真实 pages.json 门控（见 ②）
+```
+
+前者证明插件函数本身正确；后者证明插件**被正确挂进 Vite 管线**、且页面门控
+按预期放行/拦截——这是单测函数覆盖不到的。两者都绿，重构插件时才有底。
+
+---
+
 ## ❓ 常见问题
 
 ### Q1: 如何实现多页面独立配置？
@@ -261,5 +351,5 @@ onPageBack(
 1. 确认 `src/pages.json` 或根目录 `pages.json` 存在且格式正确
 2. 确认是 `pages.json` 中注册的页面级 `.vue` 文件（组件中使用不会注入，dev 下运行时会有 console 警告）
 3. 多端项目确认构建平台为 `mp-weixin`（其他平台插件自动禁用）
-4. 开启 `debug: true` 查看插件日志
+4. 开启 `debug: true` 查看插件日志（见 [如何验证插件是否生效](#-如何验证插件是否生效)）
 5. 确认 `@vue/compiler-sfc` 已安装：`pnpm add -D @vue/compiler-sfc`
