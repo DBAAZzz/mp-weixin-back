@@ -40,7 +40,10 @@ if (await isPublished()) {
 console.log(`[release] ${spec} is not published yet. Running release checks.`)
 
 await run('pnpm', ['typecheck'])
-await run('pnpm', ['test:run'])
+// 用 test:all 而不是 test:run：example/web 那套走真实 Vite 管线，是「插件确实
+// 被挂进管线、页面门控按预期放行/拦截」的唯一自动化证据。发布门禁若只跑根套件，
+// example/web 挂了照样发得出去 —— 与 CI 的通过标准不一致。
+await run('pnpm', ['test:all'])
 await run('pnpm', ['build'])
 await run('pnpm', ['check-publish'])
 
