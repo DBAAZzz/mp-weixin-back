@@ -3,7 +3,16 @@ import path from 'path'
 import fs from 'fs'
 import { MpBackEnvironmentError } from './errors'
 
-let compilerPromise: Promise<typeof import('@vue/compiler-sfc')> | null = null
+/**
+ * 缓存的是**已成功加载**的 compiler，不是整个解析过程。
+ *
+ * 为什么不缓存 Promise：这条路径上的失败几乎都是「用户依赖没装好」（版本错配 /
+ * 没装 compiler-sfc），而 watch 模式下用户会当场去修 package.json 再 install。
+ * 若把 rejected Promise 也缓存住，修好之后仍然拿到同一个旧错误 —— 必须重启 dev
+ * server 才能恢复，而报错里完全看不出这一点。曾经就是这样：一次失败把整个
+ * watch 会话钉死。
+ */
+let compilerCache: { root: string; compiler: typeof import('@vue/compiler-sfc') } | null = null
 
 /** 读一个包实际安装的版本号；读不到时返回 null（不阻断流程） */
 function readPackageVersion(entryPath: string): string | null {
@@ -59,6 +68,21 @@ export function assertSharedCompat(_require: NodeRequire, from: string): void {
     return
   }
 
+  // Node 的 require 会记住「这个 specifier 从这儿解析到了这个路径」，且**不校验
+  // 文件是否还在**：用户在 watch 会话里删掉那个被提升/重复安装的旧 shared 之后，
+  // resolve 仍会返回已删除的路径，加载拿到的还是内存里那份旧模块（实测：删完
+  // 文件、resolve 仍返回旧路径、genCacheKey 仍缺失）。于是「修好了依赖」这个
+  // 场景反而被陈旧的解析缓存挡住，用户只能重启 dev server。这里按磁盘状态作废
+  // 掉那条缓存，让下一次 resolve 重新走真实查找。
+  if (!fs.existsSync(sharedPath)) {
+    delete (_require as NodeRequire & { cache: NodeJS.Dict<NodeModule> }).cache[sharedPath]
+    try {
+      sharedPath = _require.resolve('@vue/shared', { paths: [baseDir] })
+    } catch {
+      return
+    }
+  }
+
   let shared: { genCacheKey?: unknown }
   try {
     shared = _require(sharedPath) as { genCacheKey?: unknown }
@@ -90,60 +114,52 @@ export function assertSharedCompat(_require: NodeRequire, from: string): void {
   )
 }
 
+/**
+ * 解析出这次要用的 compiler-sfc 入口及其**真实包根**。
+ *
+ * 返回包根而不是入口文件：校验起点、加载、报错里的路径三者都以它为基准，
+ * 避免各处各自 dirname 一次、算出不同的目录。
+ *
+ * 解析顺序：先从用户项目根解析（正常安装走这条），失败再退回插件自身位置
+ * （用户没装 compiler-sfc 时用插件依赖树里那份兜底）。
+ */
+function resolveCompilerEntry(_require: NodeRequire, root: string): string | null {
+  try {
+    return _require.resolve('@vue/compiler-sfc', { paths: [root] })
+  } catch {
+    try {
+      return _require.resolve('@vue/compiler-sfc')
+    } catch {
+      return null
+    }
+  }
+}
+
 export async function resolveCompiler(root: string): Promise<typeof import('@vue/compiler-sfc')> {
-  // 避免重复解析（防止并发调用时的竞态条件）
-  if (compilerPromise) {
-    return compilerPromise
+  // 只缓存**成功**的结果，且按 root 区分：换 root 时重新解析。（见 compilerCache 注释）
+  if (compilerCache && compilerCache.root === root) {
+    return compilerCache.compiler
   }
 
-  compilerPromise = (async () => {
-    // 提到 try 外层：降级分支（下面的 catch）也要用它，声明在 try 里会出作用域，
-    // 触发 ReferenceError 并被 catch 吞成一句没有信息量的「Cannot resolve」
-    const _require = createRequire(import.meta.url)
-    // 尝试加载用户项目中的 @vue/compiler-sfc
-    try {
-      // 尝试从用户根目录解析
-      const compilerPath = _require.resolve('@vue/compiler-sfc', { paths: [root] })
-      assertSharedCompat(_require, compilerPath)
-      const compiler = _require(compilerPath) as typeof import('@vue/compiler-sfc')
-      return compiler
-    } catch (error) {
-      // 版本错配是我们主动抛出的、可操作的错误：原样上抛，不要被下面的
-      // 降级分支吞掉（否则又变回一个没有信息量的报错）
-      if (error instanceof MpBackEnvironmentError) throw error
+  const _require = createRequire(import.meta.url)
+  const compilerPath = resolveCompilerEntry(_require, root)
 
-      try {
-        // 降级尝试从插件自身位置加载。校验仍要**从 compiler-sfc 自己的位置**出发
-        // 解析 @vue/shared，不能传 root —— pnpm 严格布局下 @vue/shared 不会被提升到
-        // 项目根，传 root 会解析失败、走进 assertSharedCompat 的 catch 静默返回，
-        // 于是「唯一会失败」的场景反而跳过校验（曾经踩过，CR 复现）。
-        //
-        // ⚠️ 解析、校验、加载必须走**同一套机制**（都用 CJS _require）：@vue/shared
-        // 的 exports map 给 `require` 和 `import` 指了不同的文件
-        // （require → index.js→dist/shared.cjs.js，import → dist/shared.esm-bundler.js）。
-        // 若用 CJS 校验、却用 ESM import() 加载，两者理论上可以落到不同的包副本上，
-        // 校验的就不是真正被 parse() 用的那一份（CR 指出，实测当前布局未触发）。
-        // 统一成 _require 后这个差异不存在了。
-        let from: string
-        try {
-          from = _require.resolve('@vue/compiler-sfc', { paths: [root] })
-        } catch {
-          from = _require.resolve('@vue/compiler-sfc')
-        }
-        assertSharedCompat(_require, from)
-        const compiler = _require(from) as typeof import('@vue/compiler-sfc')
-        return compiler
-      } catch (secondary) {
-        if (secondary instanceof MpBackEnvironmentError) throw secondary
-        throw new Error(
-          `[mp-weixin-back] Cannot resolve @vue/compiler-sfc.\n` +
-            `This plugin requires @vue/compiler-sfc to be installed in your project.\n` +
-            `Fix: pnpm add -D @vue/compiler-sfc\n` +
-            `Docs: https://github.com/DBAAZzz/mp-weixin-back#%EF%B8%8F-vite-配置\n`
-        )
-      }
-    }
-  })()
+  if (compilerPath) {
+    // 校验起点是 compiler-sfc 的入口：从它出发解析 @vue/shared，与 parse() 内部
+    // 的 require 同上下文。不能传 root —— pnpm 严格布局下 @vue/shared 不会被提升
+    // 到项目根，从 root 解析会失败、静默跳过校验，于是「唯一会失败」的场景反而
+    // 不校验（曾经踩过，CR 复现）。
+    assertSharedCompat(_require, compilerPath)
 
-  return compilerPromise
+    const compiler = _require(compilerPath) as typeof import('@vue/compiler-sfc')
+    compilerCache = { root, compiler }
+    return compiler
+  }
+
+  throw new Error(
+    `[mp-weixin-back] Cannot resolve @vue/compiler-sfc.\n` +
+      `This plugin requires @vue/compiler-sfc to be installed in your project.\n` +
+      `Fix: pnpm add -D @vue/compiler-sfc\n` +
+      `Docs: https://github.com/DBAAZzz/mp-weixin-back#%EF%B8%8F-vite-配置\n`
+  )
 }

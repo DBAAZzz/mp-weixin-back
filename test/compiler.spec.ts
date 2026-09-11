@@ -156,7 +156,7 @@ function writeLegacyShared(fixtureRoot: string, version = '3.4.21'): void {
   )
 }
 
-/** 每个用例都重新 import，绕开模块级的 compilerPromise 缓存 */
+/** 每个用例都重新 import，绕开模块级的 compilerCache 缓存 */
 async function loadResolveCompiler(tag: string) {
   const mod = await import(/* @vite-ignore */ `../src/compiler?case=${tag}`)
   return mod.resolveCompiler as (root: string) => Promise<{ parse: unknown }>
@@ -249,14 +249,13 @@ describe('resolveCompiler 环境校验', () => {
   })
 
   /**
-   * 降级分支必须**传入 compiler-sfc 的真实入口**作为校验起点，而不是用户项目根。
+   * 校验起点必须是 compiler-sfc 的真实入口，而不是用户项目根。
    *
-   * 这条直接钉住实参：降级分支在健康仓库里拿到的是仓库自己那份 compiler-sfc，
-   * 构造不出错配，纯行为断言测不到「实参传错」这个缺陷（CR 报的就是它）。
-   * 做法是把 fixture 做成「primary 打不到、但 root 下有个缺 genCacheKey 的 shared」，
-   * 只有起点传错（传 root）时才会被这个假 shared 影响 —— 传对了就完全不受它干扰。
+   * 这条直接钉住实参：只有起点传错（传 root）时，下面这个摆在 root 下的假 shared
+   * 才会被解析到并误报 —— 传对了就完全不受它干扰。这正是 CR 第一轮报的缺陷
+   * （当时的降级分支传的是 path.join(root, 'package.json')）。
    */
-  it('降级分支：校验起点是 compiler-sfc 入口，不会被 root 下的假 shared 干扰', async () => {
+  it('校验起点是 compiler-sfc 入口，不会被 root 下的假 shared 干扰', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-back-bare-'))
     fixtureRoots.push(root)
     // 冒充用户项目：root 下放一个 package.json + 一个缺 genCacheKey 的 @vue/shared。
@@ -274,10 +273,43 @@ describe('resolveCompiler 环境校验', () => {
     fs.writeFileSync(path.join(fakeShared, 'index.js'), 'module.exports = {}\n')
 
     const resolveCompiler = await loadResolveCompiler('fallback')
-    // 仓库依赖健康：即便 root 下摆了个缺 genCacheKey 的假 shared，
-    // 也不该被它干扰 —— 因为校验起点是 compiler-sfc 自己的入口。
+    // root 下没有 compiler-sfc，解析会退回插件自身位置（仓库那份健康的）。
+    // 即便如此，也不该被 root 下那个假 shared 干扰 —— 校验起点是 compiler-sfc 入口。
     const compiler = await resolveCompiler(root)
     expect(typeof compiler.parse).toBe('function')
+  })
+
+  /**
+   * 失败不得被缓存：watch 模式下用户当场修好依赖、重新触发构建时，必须能恢复。
+   *
+   * 旧实现把 resolveCompiler 的整个 Promise（含 rejected）记在模块级变量里，
+   * 一次失败就把整个 watch 会话钉死 —— 用户改完 package.json 重装，拿到的仍是
+   * 同一个旧错误，且报错里完全看不出「要重启 dev server」。CR（T-0f29f0）报的就是它。
+   *
+   * 这里用同一个 root 跑两次：第一次是坏树（版本错配）→ 失败；随后把坏树修好，
+   * 第二次必须成功。两次之间不换 root —— 若实现按 root 缓存了失败结果，第二次
+   * 仍会拿到旧的 rejected，这条就会红。
+   */
+  it('首次失败后修好依赖：同一 root 重试必须成功（失败不被缓存）', async () => {
+    const root = makeFixture()
+    writeLegacyShared(root)
+    const resolveCompiler = await loadResolveCompiler('retry')
+
+    const first = await resolveCompiler(root).then(
+      () => null,
+      (e: unknown) => e as Error
+    )
+    expect(first, '坏树必须失败').not.toBeNull()
+    expect(first!.message).toContain('版本不匹配')
+
+    // 用户修好了依赖：移除那个旧 @vue/shared，让 compiler-sfc 解析回健康的 shared
+    fs.rmSync(path.join(root, 'node_modules', '@vue', 'compiler-sfc', 'node_modules'), {
+      recursive: true,
+      force: true,
+    })
+
+    const compiler = await resolveCompiler(root)
+    expect(typeof compiler.parse, '修好之后必须能拿到 compiler，而不是旧的 rejected').toBe('function')
   })
 
   /**
