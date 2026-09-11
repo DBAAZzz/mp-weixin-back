@@ -4,8 +4,17 @@ on:
   push:
     branches:
       - main
+  # 允许在 Actions 页面手动触发一次发布流程（例如重跑上次失败的发布）
+  workflow_dispatch:
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+# 串行化：两次快速 push 到 main 时，若并发执行，两个 changesets/action 可能
+# 同时判定「有待发布版本」并都去 publish，第二个会撞上 E403
+# （cannot publish over an already published version）。cancel-in-progress 必须
+# 保持 false —— 取消一次正在 publish 的流程可能留下「版本号已写入、包没发全」
+# 的中间态。让它们排队，不取消。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -26,6 +35,19 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: pnpm
 
+      # 早失败：没有 token 时让这一步就炸，而不是拖到 publish 才报
+      # 一个不说明原因的 E401。changesets/action 拿到空 token 时的报错很难定位。
+      - name: Verify NPM_TOKEN is configured
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::仓库未配置 NPM_TOKEN secret（Settings → Secrets and variables → Actions）。"
+            echo "发布需要它来向 npm 认证。"
+            exit 1
+          fi
+          echo "NPM_TOKEN 已配置（长度 ${#NODE_AUTH_TOKEN}）"
+
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
@@ -35,9 +57,34 @@ jobs:
         run: pnpm --dir example/web install --no-frozen-lockfile
 
       - name: Create Release Pull Request or Publish
+        id: changesets
         uses: changesets/action@v1
         with:
           publish: pnpm release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # 让 Actions 摘要页直接显示「这次是开了 PR 还是发了版」，省得翻日志
+      - name: Publish summary
+        if: always()
+        env:
+          PUBLISHED: ${{ steps.changesets.outputs.published }}
+          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+        run: |
+          {
+            echo "### 发布结果"
+            echo ""
+            if [ "$PUBLISHED" = "true" ]; then
+              echo "已发布到 npm："
+              echo ""
+              # changesets/action 给的是一段 JSON（[{"name":…,"version":…}]）
+              echo '```json'
+              echo "$PUBLISHED_PACKAGES"
+              echo '```'
+            else
+              echo "本次未发布。若存在待消费的 changeset，这一步开的是 Version Packages PR ——"
+              echo "合并那个 PR 后再次触发本流程，才会真正发布。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+

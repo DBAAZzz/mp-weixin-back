@@ -339,6 +339,31 @@ pnpm test:all   # = pnpm test:run && pnpm example:web:test
 
 ---
 
+## 📦 发布流程
+
+用 [changesets](https://github.com/changesets/changesets) 管理版本，**全自动**：
+
+```bash
+pnpm changeset    # 描述这次改动，选择 semver 级别；提交生成的 .changeset/*.md
+```
+
+合并到 `main` 后，[`publish.yml`](./.github/workflows/publish.yml) 会自动跑：
+
+1. **有未消费的 changeset** → 开一个 Version Packages PR（只改版本号与 CHANGELOG，**不发布**）
+2. **没有待消费的 changeset** → 执行 `pnpm release` 真正发到 npm
+
+`pnpm release` 的顺序是：查 npm 上该版本是否已存在（存在即跳过）→ `typecheck`
+→ `test:all` → `build` → `check-publish` → `pnpm publish --access public`。
+**任一步失败都不会发布**，所以 example/web 套件挂了也发不出去。
+
+本地想先演练一遍：`pnpm release:dry`。
+
+> 发布需要一个 `NPM_TOKEN` secret（Settings → Secrets and variables → Actions，
+> npm 的 Automation 类型 token）。没配的话流程会在 `Verify NPM_TOKEN` 这步
+> 直接失败，并给出提示，不会拖到 publish 才报一个难懂的 E401。
+
+---
+
 ## ❓ 常见问题
 
 ### Q1: 如何实现多页面独立配置？
