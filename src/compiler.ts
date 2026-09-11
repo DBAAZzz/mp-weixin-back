@@ -43,8 +43,11 @@ function readPackageVersion(entryPath: string): string | null {
  * compiler-sfc 的 CJS 产物内部就是 `require('@vue/shared')`，且它**并不导出**
  * `shared`（`compiler.shared` 恒为 undefined），所以不能去读 compiler 上的属性 ——
  * 那样写会在唯一会失败的场景里静默跳过校验（曾经踩过）。
+ *
+ * 导出仅为可测：两个调用点传的 `from` 不同（主路径传 compiler-sfc 入口、
+ * 降级分支也解析出入口再传），「起点传错」正是踩过的坑，测试需要直接钉住这点。
  */
-function assertSharedCompat(_require: NodeRequire, from: string): void {
+export function assertSharedCompat(_require: NodeRequire, from: string): void {
   // from 可能是 compiler-sfc 的入口文件，也可能是 import.meta.url；
   // 统一取「文件所在目录」作为解析起点，与 parse() 内部的 require 同上下文
   const baseDir = from.startsWith('file:') ? path.dirname(new URL(from).pathname) : path.dirname(from)
@@ -104,11 +107,20 @@ export async function resolveCompiler(root: string): Promise<typeof import('@vue
       if (error instanceof MpBackEnvironmentError) throw error
 
       try {
-        // 降级尝试直接 import。校验仍以**用户的 root** 为解析起点 —— 这才是
-        // parse() 实际会用到的依赖树；若改用本文件位置，会去查插件自己的
-        // node_modules，在用户环境真有错配时反而看不到问题。
+        // 降级尝试直接 import。校验仍要**从 compiler-sfc 自己的位置**出发解析
+        // @vue/shared，不能传 root —— pnpm 严格布局下 @vue/shared 不会被提升到
+        // 项目根，传 root 会解析失败、走进 assertSharedCompat 的 catch 静默返回，
+        // 于是「唯一会失败」的场景反而跳过校验（曾经踩过，CR 复现）。
+        // 因此先 resolve 出 compiler-sfc 的真实入口再校验；resolve 不到就退回本
+        // 文件位置（插件自己的依赖树），至少有据可查。
+        let from: string
+        try {
+          from = _require.resolve('@vue/compiler-sfc', { paths: [root] })
+        } catch {
+          from = _require.resolve('@vue/compiler-sfc')
+        }
+        assertSharedCompat(_require, from)
         const compiler = await import('@vue/compiler-sfc')
-        assertSharedCompat(_require, path.join(root, 'package.json'))
         return compiler
       } catch (secondary) {
         if (secondary instanceof MpBackEnvironmentError) throw secondary

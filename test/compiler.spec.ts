@@ -3,6 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { createRequire } from 'module'
+import { MpBackEnvironmentError } from '../src/errors'
 
 /**
  * `resolveCompiler` 的环境校验回归测试。
@@ -177,6 +178,88 @@ describe('resolveCompiler 环境校验', () => {
   it('真实环境中 resolveCompiler 可用（不误报当前仓库）', async () => {
     const resolveCompiler = await loadResolveCompiler('self')
     const compiler = await resolveCompiler(process.cwd())
+    expect(typeof compiler.parse).toBe('function')
+  })
+
+  /**
+   * 降级分支（主路径 resolve 失败、改走 await import）在健康仓库里拿到的是仓库自己
+   * 那份 compiler-sfc，构造不出错配 —— 所以这里直接钉住 assertSharedCompat 的**契约**。
+   *
+   * 这个契约正是 CR 找出的缺陷所在：曾经的调用是
+   * `assertSharedCompat(_require, root/package.json)`，而
+   *   - pnpm 严格布局下 @vue/shared 没被提升到项目根，从 root 解析直接失败 →
+   *     走进 assertSharedCompat 的 catch 静默返回，压根不校验；
+   *   - 即便校验到，readPackageVersion(root/package.json) 读到的是**用户项目自己的
+   *     版本号**，报错会给出 `pnpm add -D @vue/shared@0.0.18` 这种有害建议。
+   * 现在的契约是：起点必须是 compiler-sfc 的入口路径。
+   */
+  describe('assertSharedCompat 的解析起点契约', () => {
+    it('起点是用户项目根时：解析不到 @vue/shared，会静默跳过校验（这正是缺陷成因）', async () => {
+      const { assertSharedCompat } = await import('../src/compiler')
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-back-bare-'))
+      fixtureRoots.push(root)
+      fs.writeFileSync(
+        path.join(root, 'package.json'),
+        JSON.stringify({ name: 'some-user-project', version: '0.0.18' })
+      )
+
+      // 从项目根出发：pnpm 严格布局下 shared 没被提升，解析失败 → 静默返回、不抛
+      expect(() => assertSharedCompat(_require, path.join(root, 'package.json'))).not.toThrow()
+    })
+
+    it('起点是 compiler-sfc 入口时：能解析到它依赖的 shared 并给出真实版本号', async () => {
+      const { assertSharedCompat } = await import('../src/compiler')
+      const compilerPath = _require.resolve('@vue/compiler-sfc', { paths: [repoRoot] })
+      // 健康依赖树：不抛
+      expect(() => assertSharedCompat(_require, compilerPath)).not.toThrow()
+
+      // 造一棵「新 compiler-sfc + 旧 shared」，并断言报错里的版本号取自 compiler-sfc
+      const root = makeFixture()
+      writeLegacyShared(root, '3.4.21')
+      const fixtureCompiler = _require.resolve('@vue/compiler-sfc', { paths: [root] })
+
+      let message = ''
+      expect(() => assertSharedCompat(_require, fixtureCompiler)).toThrow(MpBackEnvironmentError)
+      try {
+        assertSharedCompat(_require, fixtureCompiler)
+      } catch (e) {
+        message = (e as Error).message
+      }
+      expect(message).toContain('3.4.21')
+      // 版本号来自 compiler-sfc，不是用户项目自己的版本
+      expect(message).not.toContain('0.0.18')
+    })
+  })
+
+  /**
+   * 降级分支必须**传入 compiler-sfc 的真实入口**作为校验起点，而不是用户项目根。
+   *
+   * 这条直接钉住实参：降级分支在健康仓库里拿到的是仓库自己那份 compiler-sfc，
+   * 构造不出错配，纯行为断言测不到「实参传错」这个缺陷（CR 报的就是它）。
+   * 做法是把 fixture 做成「primary 打不到、但 root 下有个缺 genCacheKey 的 shared」，
+   * 只有起点传错（传 root）时才会被这个假 shared 影响 —— 传对了就完全不受它干扰。
+   */
+  it('降级分支：校验起点是 compiler-sfc 入口，不会被 root 下的假 shared 干扰', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-back-bare-'))
+    fixtureRoots.push(root)
+    // 冒充用户项目：root 下放一个 package.json + 一个缺 genCacheKey 的 @vue/shared。
+    // 若实现传的是 root，就会解析到这个假 shared 并误报；传 compiler-sfc 入口则不会。
+    fs.writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ name: 'some-user-project', version: '0.0.18' })
+    )
+    const fakeShared = path.join(root, 'node_modules', '@vue', 'shared')
+    fs.mkdirSync(fakeShared, { recursive: true })
+    fs.writeFileSync(
+      path.join(fakeShared, 'package.json'),
+      JSON.stringify({ name: '@vue/shared', version: '3.4.21', main: 'index.js' })
+    )
+    fs.writeFileSync(path.join(fakeShared, 'index.js'), 'module.exports = {}\n')
+
+    const resolveCompiler = await loadResolveCompiler('fallback')
+    // 仓库依赖健康：即便 root 下摆了个缺 genCacheKey 的假 shared，
+    // 也不该被它干扰 —— 因为校验起点是 compiler-sfc 自己的入口。
+    const compiler = await resolveCompiler(root)
     expect(typeof compiler.parse).toBe('function')
   })
 })
