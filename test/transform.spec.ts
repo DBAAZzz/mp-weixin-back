@@ -6,11 +6,17 @@ import type { UserOptions } from '../src/index'
 async function transformWith(
   code: string,
   options: UserOptions = {},
-  id = '/root/src/pages/index/index.vue'
+  id = '/root/src/pages/index/index.vue',
+  /** 可选：让 transform 内部抛错，用于验证错误分类处理（终止 vs 仅警告） */
+  failWith?: () => never
 ) {
   const plugin = MpBackPlugin(options) as any
   plugin.configResolved({ mode: 'development', root: '/root' })
   await plugin.buildStart.call({ addWatchFile: () => {} })
+  if (failWith) {
+    const { PageContext } = await import('../src/context')
+    vi.spyOn(PageContext.prototype, 'transform').mockImplementation(failWith)
+  }
   return plugin.transform.call(
     {
       warn: () => {},
@@ -134,6 +140,31 @@ describe('plugin transform', () => {
       await expect(transformWith(page('{ frequency: true }'))).rejects.toThrow(/frequency 必须是数字字面量/)
       await expect(transformWith(page('{ preventDefault: 2 }'))).rejects.toThrow(/preventDefault 必须是布尔字面量/)
       await expect(transformWith(page('{ initialValue: 0 }'))).rejects.toThrow(/initialValue 必须是布尔字面量/)
+    })
+
+    it('构建环境错误（依赖版本错配）终止构建，而不是只警告后跳过该文件', async () => {
+      const { MpBackEnvironmentError } = await import('../src/errors')
+      // 直接让 transform 内部抛出环境错误：这类问题会让**每个** .vue 都失败，
+      // 若只 warn 后 return，构建照样打印成功、拦截却全部静默失效。
+      const code = setupPage(
+        `import onPageBack from 'mp-weixin-back-helper'\nonPageBack(() => {})`
+      )
+      await expect(
+        transformWith(code, {}, '/root/src/pages/index/index.vue', () => {
+          throw new MpBackEnvironmentError('@vue/compiler-sfc 与 @vue/shared 版本不匹配。')
+        })
+      ).rejects.toThrow(/版本不匹配/)
+    })
+
+    it('意外的转换异常只警告并跳过该文件，不终止构建', async () => {
+      const code = setupPage(
+        `import onPageBack from 'mp-weixin-back-helper'\nonPageBack(() => {})`
+      )
+      // 与上面形成对照：非环境/配置类异常不该拖垮整个构建
+      const result = await transformWith(code, {}, '/root/src/pages/index/index.vue', () => {
+        throw new Error('internal boom')
+      })
+      expect(result).toBeUndefined()
     })
 
     it('第二个参数为变量/表达式时给出构建错误，而不是静默回退全局配置', async () => {

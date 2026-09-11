@@ -1,6 +1,6 @@
 import { PageContext } from './context'
 import { virtualFileId, resolvedVirtualFileId, ON_PAGE_BACK } from './constants'
-import { MpBackConfigError } from './errors'
+import { MpBackConfigError, MpBackEnvironmentError } from './errors'
 import type { Plugin } from 'vite'
 import type { Config, UserOptions } from './types'
 
@@ -97,8 +97,10 @@ function MpBackPlugin(userOptions: UserOptions = {}): Plugin {
       try {
         return await context.transform(code, id)
       } catch (error) {
-        if (error instanceof MpBackConfigError) {
-          // 用户配置错误：终止构建并给出可修复的提示（dev 下显示为 Vite overlay）
+        if (error instanceof MpBackConfigError || error instanceof MpBackEnvironmentError) {
+          // 用户配置错误 / 构建环境问题：终止构建并给出可修复的提示
+          // （dev 下显示为 Vite overlay）。后者会让每个页面都失败，
+          // 绝不能只警告了事 —— 那样构建成功、拦截却全部静默失效。
           this.error(`[mp-weixin-back] ${error.message}`)
         }
         const message = error instanceof Error ? error.message : String(error)
