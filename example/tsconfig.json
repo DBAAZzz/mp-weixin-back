@@ -1,0 +1,16 @@
+{
+  // example/ 这一层只放两个工程共用的 shared-options.ts。
+  // 它必须有自己的 tsconfig：两个子工程都 import 它，若各自用子工程的配置去检查，
+  // 内部 `../../src/types` 会按子工程的位置解析，报 TS2307。
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["esnext", "dom"],
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["shared-options.ts"]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "mp-weixin-back-example",
+  "private": true,
+  "type": "module",
+  "description": "本地验证 mp-weixin-back 转换产物的最小 Vite + Vue3 工程。web 端只验证 transform 产物，真实拦截效果需回微信小程序验证。",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "typescript": "^7.0.2",
+    "vite": "^6.4.3",
+    "vite-plugin-inspect": "^10.3.0",
+    "vitest": "^3.2.7"
+  }
+}
