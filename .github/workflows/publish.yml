@@ -7,14 +7,19 @@ on:
   # 允许在 Actions 页面手动触发一次发布流程（例如重跑上次失败的发布）
   workflow_dispatch:
 
-# 串行化：两次快速 push 到 main 时，若并发执行，两个 changesets/action 可能
-# 同时判定「有待发布版本」并都去 publish，第二个会撞上 E403
-# （cannot publish over an already published version）。cancel-in-progress 必须
-# 保持 false —— 取消一次正在 publish 的流程可能留下「版本号已写入、包没发全」
-# 的中间态。让它们排队，不取消。
+# 串行化：两次快速 push 到 main 时若并发执行，两个 job 可能同时判定「有待发布版本」
+# 并都去 publish，第二个会撞上 E403（cannot publish over an already published
+# version）。cancel-in-progress 必须保持 false —— 取消一次正在 publish 的流程可能
+# 留下「版本号已写入、包没发全」的中间态。让它们排队，不取消。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+
+# 递归防护说明：下面用 secrets.GITHUB_TOKEN push 版本提交。GitHub 规定
+# 「由 GITHUB_TOKEN 触发的事件不会创建新的 workflow run」，所以这次 push 不会
+# 再触发本 workflow。**若将来改用 PAT / GitHub App token，该防护立即失效**，
+# 必须自己加防循环条件（例如判提交信息里是否只有版本提升）。
+# 注：不要依赖 `[skip ci]` —— 默认不生效（见 readme）。
 
 jobs:
   publish:
@@ -22,17 +27,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    # 防自触发循环：下面会以 github-actions[bot] 的身份把版本号提交回 main，
-    # 那是一次新的 push 事件、会再触发本 workflow。`[skip ci]` **拦不住**它 ——
-    # GitHub 只在 workflow 配了 paths-ignore 之类条件时才看提交信息，默认照常
-    # 触发。所以这里按 actor 判断：本流程自己推的提交不再进入下一轮。
-    # 首次运行时 actor 是真实用户，正常进入。
-    if: github.actor != 'github-actions[bot]'
     steps:
       - uses: actions/checkout@v4
         with:
-          # changesets/action 要读完整历史来判定「自上次 tag 以来改了哪些包」，
-          # 浅克隆会让它算错范围。fetch-depth: 0 是官方要求。
+          # 需要完整历史：下面会校验「本 commit 的版本号是否已在 npm 上」并 push
+          # 回 main。浅克隆会让 push 与 diff 判定出错。
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
@@ -46,7 +45,7 @@ jobs:
           cache: pnpm
 
       # 早失败：没有 token 时让这一步就炸，而不是拖到 publish 才报
-      # 一个不说明原因的 E401。changesets/action 拿到空 token 时的报错很难定位。
+      # 一个不说明原因的 E401。
       - name: Verify NPM_TOKEN is configured
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -62,83 +61,77 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       # pnpm release 里跑的是 test:all，含 example/web 套件。它不进 workspace
-      # （有自己的 lockfile），必须单独装一遍，否则发布会在测试这一步挂掉。
+      # （有自己的 lockfile），必须单独装一遍，否则发布会挂在测试这一步。
       - name: Install example/web dependencies
         run: pnpm --dir example/web install --no-frozen-lockfile
 
       # 关键一步：把「已合并的改动」变成版本号 + CHANGELOG。
-      #
-      # changesets/action 的分支逻辑（读源码确认）是：
-      #   - .changeset/*.md 还在 → 开 Version Packages PR，不发布
-      #   - .changeset/*.md 没了 → 直接执行 publish 脚本
-      # 而 `changeset version` 会**消费并删除**这些 .md。所以默认流程是两步：
-      # 先合并一个 PR 把 version 跑掉，再合并那个 PR 才发布。
-      #
-      # 这里在 action 之前先跑一次 `changeset version`：合并进来时若有变更文件，
-      # 当场就地把版本号改掉，于是 action 看到「没有 changeset」→ 直接发布。
-      # 这样「合并到 main 即发布」成立。
-      #
-      # 没有 changeset 时 `changeset version` 只是打一行 warn 退出（非零码不会
-      # 发生），交给下面的 action 走「尝试发布」分支 —— 若版本号已在 npm 上，
-      # pnpm release 里的 isPublished() 会跳过，不会误发。
+      # `changeset version` 会消费并删除 .changeset/*.md。没有 changeset 时它只是
+      # 打一行 warn 退出（exit 0），不构成失败。
       - name: Apply version bump from changesets
-        run: |
-          pnpm exec changeset version
-          if ! git diff --quiet -- package.json CHANGELOG.md 2>/dev/null; then
-            echo "本次带入了版本变更："
-            git --no-pager diff --stat -- package.json CHANGELOG.md
-          else
-            echo "没有待消费的 changeset，版本号未变。"
-          fi
+        run: pnpm exec changeset version
 
+      # 把版本提升提交回 main，让仓库里的版本号与已发布的版本一致。
+      #
+      # ⚠️ 这里**必须**在发布前确定「本次要不要发」，并把结论传给后面的步骤，
+      # 不能再依赖 changesets/action 去猜 —— 它判断的是工作区里 .changeset/*.md
+      # 是否还在，而 `changeset version` 只把这些文件的删除**暂存**（git add），
+      # 工作区文件依旧存在，于是 action 会误判成「还有 changeset」→ 去开一个
+      # Version Packages PR 而不是发布，「合并即发布」直接失效。
       - name: Commit version bump
+        id: bump
         run: |
           if git diff --quiet -- package.json CHANGELOG.md 2>/dev/null; then
-            echo "无版本变更，跳过提交。"
+            echo "无版本变更（本次 push 没有待消费的 changeset）。"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           VERSION=$(node -p "require('./package.json').version")
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json CHANGELOG.md .changeset
-          git commit -m "chore: release v${VERSION} [skip ci]"
-          # 推回 main，让仓库里的版本号与已发布的版本一致；[skip ci] 避免
-          # 这次提交又触发一轮 CI（本 workflow 由 push 触发，跳过它本身无意义，
-          # 但能让 CI 少跑一趟）。
+          git commit -m "chore: release v${VERSION}"
           git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Create Release Pull Request or Publish
-        id: changesets
-        uses: changesets/action@v1
-        with:
-          publish: pnpm release
+      # 直接跑发布脚本，不再经过 changesets/action：
+      #   - 该 action 靠 stdout 里的 `New tag:` 判定是否发布，而 release.mjs 走的是
+      #     自定义脚本（不打印 `New tag:`），结论恒为「未发布」，摘要与实际相反；
+      #   - 无 changeset 时它还会误进版本分支（见上）。
+      # release.mjs 自己有 isPublished() 闸门：版本已在 npm 上就直接跳过。
+      - name: Publish
+        id: publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -o pipefail
+          pnpm release 2>&1 | tee /tmp/release.log
+          if grep -q "already exists on npm" /tmp/release.log; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      # 让 Actions 摘要页直接显示「这次是开了 PR 还是发了版」，省得翻日志
+      # 让 Actions 摘要页直接显示结果，省得翻日志
       - name: Publish summary
         if: always()
         env:
-          PUBLISHED: ${{ steps.changesets.outputs.published }}
-          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+          PUBLISHED: ${{ steps.publish.outputs.published }}
+          BUMPED: ${{ steps.bump.outputs.changed }}
+          VERSION: ${{ steps.bump.outputs.version }}
         run: |
           {
             echo "### 发布结果"
             echo ""
             if [ "$PUBLISHED" = "true" ]; then
-              echo "已发布到 npm："
-              echo ""
-              # changesets/action 给的是一段 JSON（[{"name":…,"version":…}]）
-              echo '```json'
-              echo "$PUBLISHED_PACKAGES"
-              echo '```'
+              echo "已发布到 npm：\`mp-weixin-back@${VERSION}\`"
+            elif [ "$BUMPED" = "true" ]; then
+              echo "本次做了版本提升（\`${VERSION}\`），但发布步骤未完成 —— 请查看上面 Publish 步骤的日志。"
             else
-              echo "本次未发布。"
+              echo "本次未发布：这次 push 里没有待消费的 changeset（\`.changeset/*.md\`），"
+              echo "当前版本号也已经存在于 npm 上。"
               echo ""
-              echo "常见原因：这次 push 里没有待消费的 changeset（.changeset/*.md），"
-              echo "且当前 package.json 的版本号已经在 npm 上 —— 此时 release.mjs 会主动跳过。"
-              echo "要发新版本，先跑 \`pnpm changeset\` 并把生成的 .changeset/*.md 一起提交。"
+              echo "要发新版本，先跑 \`pnpm changeset\` 并把生成的 \`.changeset/*.md\` 一起提交。"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-

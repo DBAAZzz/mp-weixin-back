@@ -366,9 +366,19 @@ pnpm changeset    # 描述这次改动、选 semver 级别；把生成的 .chang
 
 本地想先演练一遍：`pnpm release:dry`。
 
-> 流程内部会把版本提交推回 `main`，那是一次新的 push 事件。它靠 job 上的
-> `if: github.actor != 'github-actions[bot]'` 自我排除，避免无限循环 ——
-> 注意**不能**只依赖提交信息里的 `[skip ci]`，GitHub 默认不看它。
+> **为什么不用 [`changesets/action`](https://github.com/changesets/action)**：它判断
+> 「要发布还是开版本 PR」的依据是工作区里 `.changeset/*.md` 是否还在，而
+> `changeset version` 只把这些文件的删除**暂存**（`git add`）、工作区文件依旧存在，
+> 于是它会把「已版本化、该发布」误判成「还有 changeset」→ 去开一个 Version Packages
+> PR。它的发布判定还依赖 stdout 里的 `New tag:`，而我们走自定义脚本（`release.mjs`）
+> 不打印这行，结论恒为「未发布」。所以本流程直接 `pnpm release`，发布与否由
+> `release.mjs` 的 `isPublished()` 决定。
+
+> 流程内部会把版本提交推回 `main`。这一次 push **不会**再触发本 workflow ——
+> 它用的是 `secrets.GITHUB_TOKEN`，而 GitHub 规定「由 `GITHUB_TOKEN` 触发的事件
+> 不会创建新的 workflow run」。注意**不能**只依赖提交信息里的 `[skip ci]`，
+> GitHub 默认不看它；若将来改用 PAT / GitHub App token，这道递归防护会失效，
+> 需要另加防循环条件。
 
 ---
 
