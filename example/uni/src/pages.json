@@ -1,0 +1,22 @@
+{
+	"pages": [
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "mp-weixin-back 真机验证"
+			}
+		},
+		{
+			"path": "pages/form/index",
+			"style": {
+				"navigationBarTitleText": "preventDefault + frequency"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTextStyle": "black",
+		"navigationBarTitleText": "mp-weixin-back",
+		"navigationBarBackgroundColor": "#F8F8F8",
+		"backgroundColor": "#F8F8F8"
+	}
+}

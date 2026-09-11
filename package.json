@@ -16,7 +16,13 @@
     "changeset": "changeset",
     "version": "changeset version",
     "release": "node scripts/release.mjs",
-    "release:dry": "node scripts/release.mjs --dry-run"
+    "release:dry": "node scripts/release.mjs --dry-run",
+    "example:web": "pnpm --dir example/web dev",
+    "example:web:test": "pnpm --dir example/web test",
+    "example:uni:dev": "pnpm --dir example/uni dev",
+    "example:uni:build": "pnpm --dir example/uni build",
+    "example:web:typecheck": "pnpm --dir example/web type-check",
+    "example:uni:typecheck": "pnpm --dir example/uni type-check"
   },
   "keywords": [
     "miniprogram",
