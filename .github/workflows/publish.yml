@@ -22,8 +22,18 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    # 防自触发循环：下面会以 github-actions[bot] 的身份把版本号提交回 main，
+    # 那是一次新的 push 事件、会再触发本 workflow。`[skip ci]` **拦不住**它 ——
+    # GitHub 只在 workflow 配了 paths-ignore 之类条件时才看提交信息，默认照常
+    # 触发。所以这里按 actor 判断：本流程自己推的提交不再进入下一轮。
+    # 首次运行时 actor 是真实用户，正常进入。
+    if: github.actor != 'github-actions[bot]'
     steps:
       - uses: actions/checkout@v4
+        with:
+          # changesets/action 要读完整历史来判定「自上次 tag 以来改了哪些包」，
+          # 浅克隆会让它算错范围。fetch-depth: 0 是官方要求。
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
@@ -56,6 +66,47 @@ jobs:
       - name: Install example/web dependencies
         run: pnpm --dir example/web install --no-frozen-lockfile
 
+      # 关键一步：把「已合并的改动」变成版本号 + CHANGELOG。
+      #
+      # changesets/action 的分支逻辑（读源码确认）是：
+      #   - .changeset/*.md 还在 → 开 Version Packages PR，不发布
+      #   - .changeset/*.md 没了 → 直接执行 publish 脚本
+      # 而 `changeset version` 会**消费并删除**这些 .md。所以默认流程是两步：
+      # 先合并一个 PR 把 version 跑掉，再合并那个 PR 才发布。
+      #
+      # 这里在 action 之前先跑一次 `changeset version`：合并进来时若有变更文件，
+      # 当场就地把版本号改掉，于是 action 看到「没有 changeset」→ 直接发布。
+      # 这样「合并到 main 即发布」成立。
+      #
+      # 没有 changeset 时 `changeset version` 只是打一行 warn 退出（非零码不会
+      # 发生），交给下面的 action 走「尝试发布」分支 —— 若版本号已在 npm 上，
+      # pnpm release 里的 isPublished() 会跳过，不会误发。
+      - name: Apply version bump from changesets
+        run: |
+          pnpm exec changeset version
+          if ! git diff --quiet -- package.json CHANGELOG.md 2>/dev/null; then
+            echo "本次带入了版本变更："
+            git --no-pager diff --stat -- package.json CHANGELOG.md
+          else
+            echo "没有待消费的 changeset，版本号未变。"
+          fi
+
+      - name: Commit version bump
+        run: |
+          if git diff --quiet -- package.json CHANGELOG.md 2>/dev/null; then
+            echo "无版本变更，跳过提交。"
+            exit 0
+          fi
+          VERSION=$(node -p "require('./package.json').version")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json CHANGELOG.md .changeset
+          git commit -m "chore: release v${VERSION} [skip ci]"
+          # 推回 main，让仓库里的版本号与已发布的版本一致；[skip ci] 避免
+          # 这次提交又触发一轮 CI（本 workflow 由 push 触发，跳过它本身无意义，
+          # 但能让 CI 少跑一趟）。
+          git push origin HEAD:main
+
       - name: Create Release Pull Request or Publish
         id: changesets
         uses: changesets/action@v1
@@ -83,8 +134,11 @@ jobs:
               echo "$PUBLISHED_PACKAGES"
               echo '```'
             else
-              echo "本次未发布。若存在待消费的 changeset，这一步开的是 Version Packages PR ——"
-              echo "合并那个 PR 后再次触发本流程，才会真正发布。"
+              echo "本次未发布。"
+              echo ""
+              echo "常见原因：这次 push 里没有待消费的 changeset（.changeset/*.md），"
+              echo "且当前 package.json 的版本号已经在 npm 上 —— 此时 release.mjs 会主动跳过。"
+              echo "要发新版本，先跑 \`pnpm changeset\` 并把生成的 .changeset/*.md 一起提交。"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

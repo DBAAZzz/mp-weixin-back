@@ -341,26 +341,34 @@ pnpm test:all   # = pnpm test:run && pnpm example:web:test
 
 ## 📦 发布流程
 
-用 [changesets](https://github.com/changesets/changesets) 管理版本，**全自动**：
+用 [changesets](https://github.com/changesets/changesets) 管理版本。**合并到 `main` 即发布**，
+只有一步前置动作：
 
 ```bash
-pnpm changeset    # 描述这次改动，选择 semver 级别；提交生成的 .changeset/*.md
+pnpm changeset    # 描述这次改动、选 semver 级别；把生成的 .changeset/*.md 一起提交
 ```
 
-合并到 `main` 后，[`publish.yml`](./.github/workflows/publish.yml) 会自动跑：
-
-1. **有未消费的 changeset** → 开一个 Version Packages PR（只改版本号与 CHANGELOG，**不发布**）
-2. **没有待消费的 changeset** → 执行 `pnpm release` 真正发到 npm
+带着 changeset 的分支合并进 `main` 后，[`publish.yml`](./.github/workflows/publish.yml)
+自动完成：**应用版本号**（`changeset version`，消费掉 changeset 并写 CHANGELOG）
+→ 以 bot 身份提交回 `main` → 执行 `pnpm release` 发布。
 
 `pnpm release` 的顺序是：查 npm 上该版本是否已存在（存在即跳过）→ `typecheck`
 → `test:all` → `build` → `check-publish` → `pnpm publish --access public`。
 **任一步失败都不会发布**，所以 example/web 套件挂了也发不出去。
 
+关于「没有 changeset」的情况：此时版本号不变，而当前版本已在 npm 上，
+`pnpm release` 会主动跳过（`already exists on npm. Skip publish.`）。流程是绿的，
+但什么都不会发生 —— 这是**预期的**，不是坏了。想发新版就得先 `pnpm changeset`。
+
+> **`NPM_TOKEN`**（Settings → Secrets and variables → Actions，npm 的 Automation
+> 类型 token）是必需的。没配的话流程会在 `Verify NPM_TOKEN` 这步直接失败并给出
+> 提示，不会拖到 publish 才报一个难懂的 E401。
+
 本地想先演练一遍：`pnpm release:dry`。
 
-> 发布需要一个 `NPM_TOKEN` secret（Settings → Secrets and variables → Actions，
-> npm 的 Automation 类型 token）。没配的话流程会在 `Verify NPM_TOKEN` 这步
-> 直接失败，并给出提示，不会拖到 publish 才报一个难懂的 E401。
+> 流程内部会把版本提交推回 `main`，那是一次新的 push 事件。它靠 job 上的
+> `if: github.actor != 'github-actions[bot]'` 自我排除，避免无限循环 ——
+> 注意**不能**只依赖提交信息里的 `[skip ci]`，GitHub 默认不看它。
 
 ---
 
