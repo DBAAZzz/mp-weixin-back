@@ -158,8 +158,10 @@ The plugin is a pure build-time transform, so verification has four layers (see 
 2. Transform output — browser via `vite-plugin-inspect`, or grep the mp-weixin `dist` output
 3. Runtime — gesture/navbar back in the WeChat miniprogram; a page skipped by the plugin usually
    leaves the console silent, so judge by the debug logs (layer 1), not by console warnings
-4. Automated tests — two complementary suites, both required after plugin changes:
-   - `pnpm test:run` (40 cases): calls plugin functions directly with stubs, covers branch implementations
+4. Automated tests — two complementary suites, both required after plugin changes. Run them
+   together with `pnpm test:all` (= `test:run && example:web:test`); it exits non-zero if either
+   suite fails. Both green is the definition of "tests pass".
+   - `pnpm test:run` (50 cases): calls plugin functions directly with stubs, covers branch implementations
    - `pnpm example:web:test` (10 cases): boots a real Vite dev server via the programmatic API and runs
      `transformRequest`, covering plugin mounting in the Vite pipeline plus real pages.json gating
 

@@ -11,6 +11,7 @@
     "build": "unbuild",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:all": "vitest run && pnpm --dir example/web test",
     "typecheck": "tsc --noEmit",
     "check-publish": "node scripts/check-publish.mjs && pnpm publish --dry-run --no-git-checks",
     "changeset": "changeset",

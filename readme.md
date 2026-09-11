@@ -324,15 +324,18 @@ cd example/uni && pnpm install && pnpm build
 
 ### ④ 自动化测试
 
-两个套件互补，改动插件后都应当跑：
+两个套件互补，改动插件后都要跑 —— 已经合成一条命令：
 
 ```bash
-pnpm test:run        # 40 个用例：直接调插件函数、自带桩代码，覆盖各分支实现
-pnpm example:web:test  # 10 个用例：真实 Vite 管线 + 真实 pages.json 门控（见 ②）
+pnpm test:all   # = pnpm test:run && pnpm example:web:test
 ```
 
+- `pnpm test:run`（50 个用例）：直接调插件函数、自带桩代码，覆盖各分支实现
+- `pnpm --dir example/web test`（10 个用例）：真实 Vite 管线 + 真实 `pages.json` 门控（见 ②）
+
 前者证明插件函数本身正确；后者证明插件**被正确挂进 Vite 管线**、且页面门控
-按预期放行/拦截——这是单测函数覆盖不到的。两者都绿，重构插件时才有底。
+按预期放行/拦截——这是单测函数覆盖不到的。**两个套件都绿才算测试通过**，
+`pnpm test:all` 会在任一套件失败时以非零码退出。
 
 ---
 

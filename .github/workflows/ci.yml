@@ -27,8 +27,14 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # example/web 不进 workspace（有自己的 lockfile），要单独装一遍
+      - name: Install example/web dependencies
+        run: pnpm --dir example/web install --no-frozen-lockfile
+
+      # 根套件 + example/web 套件。example/web 验证的是转换产物本身，
+      # 是「插件确实生效」的唯一自动化证据，不能只跑根套件就说测试通过。
       - name: Test
-        run: pnpm test:run
+        run: pnpm test:all
 
       - name: Build
         run: pnpm build
