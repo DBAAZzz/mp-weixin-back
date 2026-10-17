@@ -8,7 +8,7 @@ const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url
 const spec = `${pkg.name}@${pkg.version}`
 
 try {
-  const { stdout } = await execFileAsync('npm', ['view', spec, 'version', '--json'])
+  const { stdout } = await execFileAsync('npm', ['view', spec, 'version', '--json', '--registry', 'https://registry.npmjs.org/'])
   const publishedVersion = JSON.parse(stdout)
 
   if (publishedVersion) {
