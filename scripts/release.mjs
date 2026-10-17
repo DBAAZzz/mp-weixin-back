@@ -4,13 +4,15 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 const dryRun = process.argv.includes('--dry-run')
+// 显式指定：本机的 npm 可能配了镜像（npmmirror），镜像既不能发布，也可能还没同步到最新版本
+const REGISTRY = 'https://registry.npmjs.org/'
 
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 const spec = `${pkg.name}@${pkg.version}`
 
 async function isPublished() {
   try {
-    const { stdout } = await execFileAsync('npm', ['view', spec, 'version', '--json'])
+    const { stdout } = await execFileAsync('npm', ['view', spec, 'version', '--json', '--registry', REGISTRY])
     return Boolean(JSON.parse(stdout))
   } catch (error) {
     const stderr = String(error.stderr ?? '')
@@ -50,5 +52,7 @@ await run('pnpm', ['check-publish'])
 if (dryRun) {
   console.log('[release] Dry run completed.')
 } else {
-  await run('pnpm', ['publish', '--access', 'public', '--no-git-checks'])
+  // 用 npm 而不是 pnpm 发布：CI 里的 Trusted Publishing 由 npm CLI 完成 OIDC 认证，
+  // pnpm 10 是否支持说法不一。这个包没有 workspace 依赖，两者发出的内容相同
+  await run('npm', ['publish', '--access', 'public', '--registry', REGISTRY])
 }

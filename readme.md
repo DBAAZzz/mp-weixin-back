@@ -353,16 +353,22 @@ pnpm changeset    # 描述这次改动、选 semver 级别；把生成的 .chang
 → 以 bot 身份提交回 `main` → 执行 `pnpm release` 发布。
 
 `pnpm release` 的顺序是：查 npm 上该版本是否已存在（存在即跳过）→ `typecheck`
-→ `test:all` → `build` → `check-publish` → `pnpm publish --access public`。
+→ `test:all` → `build` → `check-publish` → `npm publish --access public`。
 **任一步失败都不会发布**，所以 example/web 套件挂了也发不出去。
 
 关于「没有 changeset」的情况：此时版本号不变，而当前版本已在 npm 上，
 `pnpm release` 会主动跳过（`already exists on npm. Skip publish.`）。流程是绿的，
 但什么都不会发生 —— 这是**预期的**，不是坏了。想发新版就得先 `pnpm changeset`。
 
-> **`NPM_TOKEN`**（Settings → Secrets and variables → Actions，npm 的 Automation
-> 类型 token）是必需的。没配的话流程会在 `Verify NPM_TOKEN` 这步直接失败并给出
-> 提示，不会拖到 publish 才报一个难懂的 E401。
+> 发布用 npm 的 **Trusted Publishing**（OIDC）认证，**不需要 `NPM_TOKEN`**：npmjs.com 上
+> mp-weixin-back 的 Settings → Trusted Publisher 登记了本仓库的 `publish.yml`。改 workflow
+> 文件名或仓库名时要同步改登记，否则 publish 会报一个伪装成「包不存在」的 E404。
+> 用命令行查看或重新登记（本机 npm 配了镜像时 `--registry` 不能省）：
+>
+> ```bash
+> npx npm@11 trust list mp-weixin-back --registry https://registry.npmjs.org
+> npx npm@11 trust github mp-weixin-back --file publish.yml --repo DBAAZzz/mp-weixin-back --allow-publish --registry https://registry.npmjs.org
+> ```
 
 本地想先演练一遍：`pnpm release:dry`。
 

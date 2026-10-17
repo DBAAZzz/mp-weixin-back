@@ -27,6 +27,9 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # 发布用 npm 的 Trusted Publishing：GitHub 签发 OIDC token 向 npm 认证，同时生成 provenance。
+      # npmjs.com 上 mp-weixin-back 的设置里登记了本仓库的这个文件（publish.yml），改名要同步改登记
+      id-token: write
     steps:
       # v7/v6：旧版 action 跑在 Node 20 上，已被 GitHub 强制升到 Node 24 并告警
       - uses: actions/checkout@v7
@@ -45,27 +48,11 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: pnpm
 
-      # 早失败：token 缺失或失效时让这一步就炸，而不是拖到 publish 才报。
-      # 注意 npm 对无效认证的 publish 会回一个伪装成「包不存在」的 404（避免
-      # 泄露包是否存在），日志极难排查 —— 所以必须在这里先验证 token 本身。
-      # 另：npm 已于 2025-12-09 永久吊销全部 classic token，旧 token 失效先想到这个。
-      - name: Verify NPM_TOKEN is configured and valid
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error::仓库未配置 NPM_TOKEN secret（Settings → Secrets and variables → Actions）。"
-            echo "发布需要它来向 npm 认证。"
-            exit 1
-          fi
-          ACCOUNT=$(npm whoami --registry https://registry.npmjs.org 2>/dev/null) || {
-            echo "::error::NPM_TOKEN 无效或已过期（npm whoami 认证未通过）。"
-            echo "npm 已于 2025-12-09 永久吊销全部 classic token。请到 npmjs.com 生成"
-            echo "granular access token（对 mp-weixin-back 勾选 Read and write），"
-            echo "然后更新仓库 secret NPM_TOKEN（Settings → Secrets and variables → Actions）。"
-            exit 1
-          }
-          echo "NPM_TOKEN 有效（账号 ${ACCOUNT}）"
+      # Trusted Publishing 需要 npm ≥ 11.5.1，Node 22 自带的是 npm 10。
+      # npm 版本不够、或 npmjs.com 上登记的仓库 / 文件名对不上时，publish 报的是一个
+      # 伪装成「包不存在」的 E404，排查时先查这两点
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -112,8 +99,6 @@ jobs:
       # release.mjs 自己有 isPublished() 闸门：版本已在 npm 上就直接跳过。
       - name: Publish
         id: publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -o pipefail
           pnpm release 2>&1 | tee /tmp/release.log
